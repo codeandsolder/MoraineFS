@@ -1,0 +1,50 @@
+[package]
+name = "morainefs-control"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-2.0-only"
+publish = false
+
+[dependencies]
+clap = { version = "4.6.7", features = ["derive"] }
+crossbeam-channel = "0.5.17"
+ctrlc = "3.5.2"
+rayon = "1.12.0"
+rustix = { version = "1.1.5", features = ["fs", "process"] }
+socket2 = "0.6.5"
+thiserror = "2.0.21"
+walkdir = "2.5.0"
+xattr = "1.6.1"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+[lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+
+[lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "deny", priority = -1 }
+nursery = { level = "deny", priority = -1 }
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+
+[[bin]]
+name = "moraine-checkpoint"
+path = "src/bin/moraine_checkpoint.rs"
+
+[[bin]]
+name = "moraine-admit"
+path = "src/bin/moraine_admit.rs"
+
+[[bin]]
+name = "moraine-range-cache-gc"
+path = "src/bin/moraine_range_cache_gc.rs"
