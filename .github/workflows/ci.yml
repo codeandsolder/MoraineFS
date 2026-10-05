@@ -21,6 +21,10 @@ jobs:
         run: >-
           sudo apt-get update && sudo apt-get install -y --no-install-recommends
           curl gcc meson ninja-build pkg-config shellcheck
+      - name: Install Rust toolchain
+        run: >-
+          rustup toolchain install 1.99.0 --profile minimal
+          --component clippy --component rustfmt
       - name: Build current libfuse
         run: |
           archive="$RUNNER_TEMP/fuse-${LIBFUSE_VERSION}.tar.gz"
@@ -39,13 +43,11 @@ jobs:
           meson install -C "$build_dir"
           echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
-      - uses: astral-sh/setup-uv@v10.2.0
-        with:
-          version: "0.12.19"
-          enable-cache: true
-      - name: Sync Python tooling
-        run: uv sync --locked
-      - name: Lint and test
+      - name: Toolchain versions
+        run: |
+          rustc --version
+          cargo --version
+      - name: Lint, test, and build
         run: make check
       - name: ShellCheck
         run: shellcheck tools/setup-zram.sh
