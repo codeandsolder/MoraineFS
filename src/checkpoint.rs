@@ -1,9 +1,8 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
-use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, ErrorKind};
-use std::os::unix::ffi::{OsStrExt, OsStringExt};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -37,19 +36,18 @@ pub struct CheckpointConfig {
 }
 
 #[derive(Debug)]
-pub struct Prepared {
+struct Prepared {
     pub source: PathBuf,
     pub start_seq: u64,
     pub clean_gen: Generation,
     pub copied: u64,
-    pub copy_time: Duration,
     pub changed_during_copy: bool,
     pub canonical_file: Option<File>,
     pub sync_dirs: BTreeSet<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum PrepareStatus {
+enum PrepareStatus {
     Prepared,
     RenameInProgress,
     OverlayMissing,
@@ -64,7 +62,7 @@ pub enum PrepareStatus {
 
 impl PrepareStatus {
     #[must_use]
-    pub fn label(&self) -> String {
+    fn label(&self) -> String {
         match self {
             Self::Prepared => "prepared".to_owned(),
             Self::RenameInProgress => "rename_in_progress".to_owned(),
@@ -120,7 +118,7 @@ impl Checkpointer {
                 "batch_max_files must be non-zero",
             ));
         }
-        let sync_file = File::open(&layout.source_prefix)?;
+        let sync_file = File::open(&layout.source_root)?;
         let (sender, receiver) = unbounded();
         Ok(Self {
             layout,
@@ -146,7 +144,7 @@ impl Checkpointer {
     }
 
     pub fn enqueue(&self, source: &Path, changed_event: bool) -> io::Result<bool> {
-        self.layout.relative_source(source)?;
+        self.layout.storage_key(source)?;
         let now = Instant::now();
         let mut state = self.lock_scheduler()?;
         if changed_event {
@@ -260,7 +258,7 @@ impl Checkpointer {
         Ok(due.saturating_duration_since(Instant::now()).min(maximum))
     }
 
-    pub fn prepare_copy(&self, source: &Path, start_seq: u64) -> (PrepareStatus, Option<Prepared>) {
+    fn prepare_copy(&self, source: &Path, start_seq: u64) -> (PrepareStatus, Option<Prepared>) {
         match self.prepare_copy_inner(source, start_seq) {
             Ok(Some(prepared)) => (PrepareStatus::Prepared, Some(prepared)),
             Ok(None) => (PrepareStatus::OverlayMissing, None),
@@ -283,13 +281,12 @@ impl Checkpointer {
             return Err(PrepareError::Status(PrepareStatus::RenameInProgress));
         }
 
-        let overlay = self.layout.writeback_path(source)?;
+        let overlay = self.layout.overlay_path(source)?;
         let overlay_file = match open_read_nofollow(&overlay) {
             Ok(file) => file,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
             Err(_) => return Ok(None),
         };
-        let started = Instant::now();
         let before = overlay_file.metadata()?;
         if !before.file_type().is_file() {
             return Err(PrepareError::Status(PrepareStatus::OverlayNotRegular));
@@ -368,7 +365,6 @@ impl Checkpointer {
             start_seq,
             clean_gen: before_gen,
             copied: before_gen.size,
-            copy_time: started.elapsed(),
             changed_during_copy,
             canonical_file: keep_file,
             sync_dirs,
@@ -397,12 +393,12 @@ impl Checkpointer {
     }
 
     fn discard_orphan(&self, source: &Path) -> io::Result<()> {
-        remove_if_exists(&self.layout.writeback_path(source)?)?;
+        remove_if_exists(&self.layout.overlay_path(source)?)?;
         self.store.remove_generation(source)
     }
 
-    pub fn overlay_generation(&self, source: &Path) -> io::Result<Option<Generation>> {
-        let path = self.layout.writeback_path(source)?;
+    fn overlay_generation(&self, source: &Path) -> io::Result<Option<Generation>> {
+        let path = self.layout.overlay_path(source)?;
         let metadata = match fs::metadata(path) {
             Ok(metadata) => metadata,
             Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -414,7 +410,7 @@ impl Checkpointer {
         Ok(Some(Generation::from_metadata(&metadata)?))
     }
 
-    pub fn finalize_rename(&self, source: &Path) -> io::Result<()> {
+    fn finalize_rename(&self, source: &Path) -> io::Result<()> {
         let old = match self.journal.read_rename_source(source)? {
             Some(old) => old,
             None if self.journal.rename_marker_exists(source)? => {
@@ -426,7 +422,7 @@ impl Checkpointer {
             None => return Ok(()),
         };
 
-        let overlay = self.layout.writeback_path(source)?;
+        let overlay = self.layout.overlay_path(source)?;
         if overlay.exists()
             && let Some(parent) = overlay.parent()
         {
@@ -447,15 +443,8 @@ impl Checkpointer {
         include_incomplete: bool,
     ) -> io::Result<HashMap<String, u64>> {
         let mut counts = HashMap::new();
-        let root = self.journal.rename_root();
-        if !root.exists() {
-            return Ok(counts);
-        }
-
-        let mut markers = collect_suffix_files(root, b".rename")?;
-        markers.sort();
-        for marker in markers {
-            match self.recover_rename_marker(&marker, include_incomplete) {
+        for destination in self.journal.pending_renames()? {
+            match self.recover_rename(&destination, include_incomplete) {
                 Ok(Some(status)) => bump(&mut counts, status),
                 Ok(None) => {}
                 Err(error) => {
@@ -465,29 +454,35 @@ impl Checkpointer {
             }
         }
 
-        self.prune_orphan_rename_aux(&mut counts)?;
+        let cleanup = self.journal.prune_orphans()?;
+        bump_by(
+            &mut counts,
+            "orphan_ready_pruned",
+            cleanup.orphan_ready_pruned,
+        );
+        bump_by(
+            &mut counts,
+            "orphan_backup_pruned",
+            cleanup.orphan_backup_pruned,
+        );
         Ok(counts)
     }
 
-    fn recover_rename_marker(
+    fn recover_rename(
         &self,
-        marker: &Path,
+        destination: &Path,
         include_incomplete: bool,
     ) -> io::Result<Option<&'static str>> {
-        let root = self.journal.rename_root();
-        let Ok(destination) = source_from_marker(root, &self.layout, marker, b".rename") else {
-            return Ok(None);
-        };
-        let Some(old) = self.journal.read_rename_source(&destination)? else {
+        let Some(old) = self.journal.read_rename_source(destination)? else {
             return Ok(Some("invalid_marker"));
         };
-        let ready = self.journal.rename_ready_exists(&destination)?;
+        let ready = self.journal.rename_ready_exists(destination)?;
         if !ready && !include_incomplete {
             return Ok(Some("deferred_incomplete"));
         }
 
-        let old_overlay = self.layout.writeback_path(&old)?;
-        let new_overlay = self.layout.writeback_path(&destination)?;
+        let old_overlay = self.layout.overlay_path(&old)?;
+        let new_overlay = self.layout.overlay_path(destination)?;
         let old_exists = old_overlay.is_file();
         let new_exists = new_overlay.is_file();
         if old_exists {
@@ -504,90 +499,49 @@ impl Checkpointer {
                 sync_directory(parent)?;
             }
         } else if !new_exists {
-            if !lexists(&old) && !lexists(&destination) {
+            if !lexists(&old) && !lexists(destination) {
                 if self.journal.create_marker_exists(&old)? {
                     self.journal.clear_create_marker(&old)?;
                 }
-                if self.journal.create_marker_exists(&destination)? {
-                    self.journal.clear_create_marker(&destination)?;
+                if self.journal.create_marker_exists(destination)? {
+                    self.journal.clear_create_marker(destination)?;
                 }
-                if self.journal.rename_ready_exists(&destination)? {
-                    self.journal.clear_rename_ready(&destination)?;
+                if self.journal.rename_ready_exists(destination)? {
+                    self.journal.clear_rename_ready(destination)?;
                 }
-                self.journal.remove_destination_backup(&destination)?;
-                self.journal.clear_rename_marker(&destination)?;
+                self.journal.remove_destination_backup(destination)?;
+                self.journal.clear_rename_marker(destination)?;
                 return Ok(Some("deleted_transaction"));
             }
             return Ok(Some("missing_overlay"));
         }
 
         self.store.remove_generation(&old)?;
-        self.store.remove_generation(&destination)?;
+        self.store.remove_generation(destination)?;
         if lexists(&old) {
-            fs::rename(&old, &destination)?;
-        } else if !lexists(&destination) {
+            fs::rename(&old, destination)?;
+        } else if !lexists(destination) {
             let metadata = fs::metadata(&new_overlay)?;
-            let file = create_write_nofollow(&destination, metadata.mode() & 0o7777)?;
+            let file = create_write_nofollow(destination, metadata.mode() & 0o7777)?;
             apply_owner_mode_best_effort(&file, &metadata);
         }
 
-        self.journal.remove_destination_backup(&destination)?;
+        self.journal.remove_destination_backup(destination)?;
         if ready {
             Ok(Some("ready_pending"))
         } else {
-            self.journal.mark_rename_ready(&destination)?;
+            self.journal.mark_rename_ready(destination)?;
             Ok(Some("recovered_incomplete"))
         }
-    }
-
-    fn prune_orphan_rename_aux(&self, counts: &mut HashMap<String, u64>) -> io::Result<()> {
-        let root = self.journal.rename_root();
-        for (suffix, marker_suffix, key) in [
-            (
-                b".rename.ready".as_slice(),
-                b".rename".as_slice(),
-                "orphan_ready_pruned",
-            ),
-            (
-                b".rename.dst-overlay".as_slice(),
-                b".rename".as_slice(),
-                "orphan_backup_pruned",
-            ),
-        ] {
-            let mut paths = collect_suffix_files(root, suffix)?;
-            paths.sort();
-            for path in paths {
-                let Some(name) = path.file_name() else {
-                    continue;
-                };
-                let raw = name.as_bytes();
-                let Some(base) = raw.strip_suffix(suffix) else {
-                    continue;
-                };
-                let mut marker_name = base.to_vec();
-                marker_name.extend_from_slice(marker_suffix);
-                let marker = path.with_file_name(OsString::from_vec(marker_name));
-                if marker.exists() || fs::remove_file(&path).is_err() {
-                    continue;
-                }
-                if let Some(parent) = path.parent()
-                    && sync_directory(parent).is_err()
-                {
-                    continue;
-                }
-                bump(counts, key);
-            }
-        }
-        Ok(())
     }
 
     pub fn scan_existing(&self) -> io::Result<(u64, u64, u64)> {
         let mut seen = 0_u64;
         let mut dirty = 0_u64;
-        if !self.layout.writeback_root.exists() {
+        if !self.layout.overlay_root.exists() {
             return Ok((0, 0, self.prune_states()?));
         }
-        for entry in WalkDir::new(&self.layout.writeback_root)
+        for entry in WalkDir::new(&self.layout.overlay_root)
             .follow_links(false)
             .into_iter()
             .filter_map(Result::ok)
@@ -598,15 +552,15 @@ impl Checkpointer {
             if entry
                 .file_name()
                 .as_bytes()
-                .windows(b".io-tier-tmp.".len())
-                .any(|w| w == b".io-tier-tmp.")
+                .windows(b".morainefs.tmp.".len())
+                .any(|w| w == b".morainefs.tmp.")
             {
                 continue;
             }
-            let Ok(relative) = entry.path().strip_prefix(&self.layout.writeback_root) else {
+            let Ok(relative) = entry.path().strip_prefix(&self.layout.overlay_root) else {
                 continue;
             };
-            let Ok(source) = self.layout.source_from_relative(relative) else {
+            let Ok(source) = self.layout.source_from_storage_key(relative) else {
                 continue;
             };
             let Ok(metadata) = entry.metadata() else {
@@ -631,32 +585,13 @@ impl Checkpointer {
     }
 
     pub fn prune_states(&self) -> io::Result<u64> {
-        if !self.layout.state_root.exists() {
-            return Ok(0);
-        }
         let mut removed = 0_u64;
-        for entry in WalkDir::new(&self.layout.state_root)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(Result::ok)
-        {
-            if !entry.file_type().is_file() {
+        for source in self.store.sources()? {
+            if self.layout.overlay_path(&source)?.exists() {
                 continue;
             }
-            let name = entry.file_name().as_bytes();
-            let Some(base) = name.strip_suffix(b".state") else {
-                continue;
-            };
-            let Ok(relative) = entry.path().strip_prefix(&self.layout.state_root) else {
-                continue;
-            };
-            let overlay_relative = relative.with_file_name(OsString::from_vec(base.to_vec()));
-            if self.layout.writeback_root.join(overlay_relative).exists() {
-                continue;
-            }
-            if fs::remove_file(entry.path()).is_ok() {
-                removed = removed.saturating_add(1);
-            }
+            self.store.remove_generation(&source)?;
+            removed = removed.saturating_add(1);
         }
         Ok(removed)
     }
@@ -820,7 +755,7 @@ impl Checkpointer {
             .unwrap_or_default())
     }
 
-    pub fn finish_source(
+    fn finish_source(
         &self,
         source: &Path,
         retry: bool,
@@ -868,7 +803,7 @@ fn open_read_nofollow(path: &Path) -> io::Result<File> {
     .map_err(io::Error::from)
 }
 
-pub(crate) fn open_read_nofollow_for_admission(path: &Path) -> io::Result<File> {
+pub fn open_read_nofollow_for_admission(path: &Path) -> io::Result<File> {
     open_read_nofollow(path)
 }
 
@@ -921,49 +856,15 @@ fn lexists(path: &Path) -> bool {
 }
 
 fn bump(counts: &mut HashMap<String, u64>, key: &str) {
-    let value = counts.entry(key.to_owned()).or_default();
-    *value = value.saturating_add(1);
+    bump_by(counts, key, 1);
 }
 
-fn collect_suffix_files(root: &Path, suffix: &[u8]) -> io::Result<Vec<PathBuf>> {
-    let mut result = Vec::new();
-    for entry in WalkDir::new(root).follow_links(false) {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                if let Some(io_error) = error.io_error()
-                    && io_error.kind() != ErrorKind::NotFound
-                {
-                    return Err(io::Error::new(io_error.kind(), io_error.to_string()));
-                }
-                continue;
-            }
-        };
-        if entry.file_type().is_file() && entry.file_name().as_bytes().ends_with(suffix) {
-            result.push(entry.into_path());
-        }
+fn bump_by(counts: &mut HashMap<String, u64>, key: &str, amount: u64) {
+    if amount == 0 {
+        return;
     }
-    Ok(result)
-}
-
-fn source_from_marker(
-    root: &Path,
-    layout: &Layout,
-    marker: &Path,
-    suffix: &[u8],
-) -> io::Result<PathBuf> {
-    let relative = marker
-        .strip_prefix(root)
-        .map_err(|_| io::Error::new(ErrorKind::InvalidData, "marker outside rename root"))?;
-    let name = relative
-        .file_name()
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "marker has no file name"))?;
-    let base = name
-        .as_bytes()
-        .strip_suffix(suffix)
-        .ok_or_else(|| io::Error::new(ErrorKind::InvalidData, "marker suffix mismatch"))?;
-    let relative = relative.with_file_name(OsString::from_vec(base.to_vec()));
-    layout.source_from_relative(&relative)
+    let value = counts.entry(key.to_owned()).or_default();
+    *value = value.saturating_add(amount);
 }
 
 #[cfg(test)]

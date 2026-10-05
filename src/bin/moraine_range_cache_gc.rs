@@ -2,12 +2,12 @@ use std::io;
 use std::path::PathBuf;
 
 use clap::Parser;
-use morainefs_control::range_gc::collect_stale_process_dirs;
+use morainefs::collect_stale_process_dirs;
 
 #[derive(Debug, Parser)]
 #[command(about = "Remove stale per-process MoraineFS range-cache directories")]
 struct Args {
-    #[arg(long, default_value = "/var/cache/io-tierfs/range-cache")]
+    #[arg(long, default_value = "/var/cache/morainefs/ranges")]
     root: PathBuf,
 }
 

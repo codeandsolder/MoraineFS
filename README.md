@@ -1,53 +1,50 @@
 # MoraineFS
 
-MoraineFS is an experimental single-node tiered storage layer that presents an ordinary FUSE filesystem while moving data across fast disposable tiers and slower durable/object-backed tiers according to policy.
+MoraineFS is an experimental single-node tiered filesystem. It presents a normal FUSE filesystem while placing data across fast disposable tiers and slower durable/object-backed tiers according to policy.
 
-The current implementation is the consolidated successor to the `io-tierfs` prototype. The foreground filesystem/data path remains a small low-level libfuse C core, while the asynchronous control plane is Rust: checkpoint/convergence, crash recovery, hot-object admission, and stale range-cache collection. The longer-term storage model is content-addressed and is intended to expose a pragmatic S3-compatible object surface alongside the filesystem mount.
+This is an early prototype. **There is no compatibility promise for command lines, service names, private paths, or on-disk metadata.** We keep semantics that have been validated and freely replace prototype plumbing when a better design becomes clear.
 
-## Status
+## Current architecture
 
-This repository is the canonical development source and is still experimental. The cold-storage host has promoted the Rust control plane while deliberately retaining the existing `io-tierfs` unit, socket, and state-path identities through compatibility drop-ins tracked under `deploy/systemd`. Renaming those runtime identities and promoting a canonical MoraineFS foreground mount remain separate operations. Repository changes do not deploy themselves.
+- **Foreground path:** a small low-level libfuse C core, kept close to libfuse so passthrough and kernel-facing behavior remain easy to audit.
+- **Control plane:** Rust 1.99 for checkpoint/convergence scheduling, crash and rename recovery, hot-object admission, and range-cache garbage collection.
+- **Fast data:** RAM/zram for tiny hot objects and NVMe overlays/writeback.
+- **Durable data:** a local durable tier today, with content-addressed and S3-compatible backing intended later.
+- **Policy:** prefix-based durable/volatile behavior today; the policy model can evolve independently of storage backends.
 
-The Rust control plane deliberately does **not** commit us to a tiny-object or metadata database yet. Checkpoint generation state is behind `MetadataStore`, and hot micro-object storage is behind `MicroStore`. File/directory-backed implementations preserve the current prototype layout while the database benchmark determines the permanent backend.
+The database benchmark is intentionally still the decision point for tiny-object and metadata persistence. The Rust control plane therefore depends on narrow interfaces (`MetadataStore`, `NamespaceJournal`, and `MicroStore`) rather than on a particular database. The current directory/file-backed implementations are disposable prototype adapters, not a stable storage format.
 
-## Architecture
+The foreground C path still reads/writes the prototype file-backed overlay/generation/journal layout directly. That is the remaining backend-coupled seam, intentionally left provisional until the benchmark chooses the metadata/tiny-object backend; it is not an interface to preserve.
 
-- **Filesystem surface:** low-level FUSE namespace and policy control, with kernel passthrough for materialized files where possible.
-- **Control plane:** Rust 1.99 scheduler, checkpoint/convergence engine, namespace recovery, admission worker, and range-cache GC.
-- **Fast tiers:** RAM/tmpfs/zram for hot or regenerable state, then NVMe for durable writeback and cache state.
-- **Cold tiers:** local durable storage today; immutable content-addressed objects and optional remote S3-compatible storage are the intended backing model.
-- **Policy:** longest-prefix `durable` / `volatile` rules today, evolving toward generic per-tier placement and acknowledgement requirements rather than hard-coded media names.
-- **Durability:** foreground acknowledgement and background convergence are separate concerns. Volatile trees may deliberately lose uncheckpointed state.
-- **Backend seams:** metadata and micro-object persistence are traits so the database benchmark can select an implementation without changing checkpoint or admission semantics.
+## What is considered stable enough to keep
 
-## Deployment compatibility
+The useful part of the old prototype is its behavior: asynchronous convergence, generation validation, batching/settling, crash recovery, rename transaction semantics, admission/eviction policy, and range-cache cleanup. Those semantics live in Rust and are covered by deterministic tests.
 
-The current cold-storage promotion installs the Rust release binaries under `/usr/local/libexec/morainefs/` and uses the drop-ins in `deploy/systemd/` to override only `ExecStart` on the existing `io-tierfs` services. Socket and state paths remain unchanged, so the compatibility boundary is explicit and rollback stays simple: remove the corresponding `rust.conf`, reload systemd, and restart the service.
+No legacy runtime identity or compatibility layer is carried forward; the repository describes the current prototype only.
 
 ## Build and checks
 
-Requires Rust 1.99, libfuse >= 3.17.2 (passthrough support), `pkg-config`, and GCC. The checked-in `rust-toolchain.toml` selects the Rust toolchain and components. CI also builds against the current libfuse release rather than Ubuntu's older packaged copy.
+Requires Rust 1.99, libfuse >= 3.17.2, `pkg-config`, and GCC.
 
 ```sh
 make check
 ```
 
-`make check` runs rustfmt, strict Clippy gates, the Rust recovery/admission/GC test suite, shell syntax checks, Git whitespace checks, the C warnings-as-errors build, and release builds of the Rust daemons.
+`make check` runs rustfmt, strict Clippy, Rust tests, shell/Git checks, the C warnings-as-errors build, and release builds of the Rust binaries.
 
 ## Layout
 
-- `src/morainefs.c` and `src/passthrough_helpers.h` — low-level FUSE data/namespace path.
-- `src/checkpoint.rs` — asynchronous convergence, batching, durability barriers, and crash recovery.
-- `src/admission.rs` — hot micro-object admission and eviction policy.
-- `src/store.rs` — checkpoint metadata backend abstraction and current file-backed adapter.
-- `src/journal.rs` — namespace intent abstraction and current file-backed adapter.
-- `src/range_gc.rs` — stale per-process range-cache collection.
-- `src/bin/` — `moraine-checkpoint`, `moraine-admit`, and `moraine-range-cache-gc` entry points.
-- `deploy/systemd/` — compatibility drop-ins for the current cold-storage Rust control-plane promotion.
-- `tools/setup-zram.sh` — current zram helper.
-- `config/policy.example.conf` — current prefix-policy syntax.
+- `src/morainefs.c`, `src/passthrough_helpers.h` — low-level FUSE foreground/data path.
+- `src/checkpoint.rs` — asynchronous convergence, scheduling, durability barriers, and recovery semantics.
+- `src/admission.rs` — tiny/hot-object admission and eviction semantics.
+- `src/store.rs` — metadata interface plus disposable file-backed adapter.
+- `src/journal.rs` — namespace transaction interface plus disposable file-backed adapter.
+- `src/range_gc.rs` — stale per-process range-cache cleanup.
+- `src/bin/` — small process entry points around those libraries.
+- `tools/setup-zram.sh` — current zram development helper.
+- `config/policy.example.conf` — current policy syntax.
 
-Detailed design history, benchmark evidence, migration notes, and operational state live in Notion rather than in the repository.
+Detailed exploration and benchmark history belong in Notion, not in the source tree.
 
 ## License
 

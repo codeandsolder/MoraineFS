@@ -11,10 +11,10 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use clap::{Parser, ValueEnum};
-use morainefs_control::checkpoint::{CheckpointConfig, Checkpointer, Durability};
-use morainefs_control::journal::FileNamespaceJournal;
-use morainefs_control::paths::Layout;
-use morainefs_control::store::{FileMetadataStore, MetadataStore};
+use morainefs::{
+    CheckpointConfig, Checkpointer, Durability, FileMetadataStore, FileNamespaceJournal, Layout,
+    MetadataStore,
+};
 use socket2::SockRef;
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -35,20 +35,16 @@ impl From<DurabilityArg> for Durability {
 #[derive(Debug, Parser)]
 #[command(about = "MoraineFS asynchronous durable-tier checkpointer")]
 struct Args {
-    #[arg(long, default_value = "/var/lib/io-tierfs/writeback")]
-    root: PathBuf,
-    #[arg(long, default_value = "/var/lib/io-tierfs/checkpoint-state")]
-    state_root: PathBuf,
-    #[arg(long, default_value = "/var/lib/io-tierfs/namespace-state")]
-    namespace_root: PathBuf,
-    #[arg(long, default_value = "/var/lib/io-tierfs/rename-state")]
-    rename_root: PathBuf,
-    #[arg(long, default_value = "/run/io-tierfs-checkpoint.sock")]
+    #[arg(long, default_value = "/var/lib/morainefs/overlay")]
+    overlay_root: PathBuf,
+    #[arg(long, default_value = "/var/lib/morainefs/metadata/generations")]
+    generation_root: PathBuf,
+    #[arg(long, default_value = "/var/lib/morainefs/metadata/journal")]
+    journal_root: PathBuf,
+    #[arg(long, default_value = "/run/morainefs/checkpoint.sock")]
     socket: PathBuf,
-    #[arg(long, default_value = "/srv/scratch/")]
-    source_prefix: PathBuf,
-    #[arg(long, default_value_t = 1)]
-    workers: usize,
+    #[arg(long)]
+    source_root: PathBuf,
     #[arg(long, default_value_t = 64)]
     batch_max_files: usize,
     #[arg(long, default_value_t = 0.25)]
@@ -69,16 +65,13 @@ fn main() -> io::Result<()> {
 }
 
 fn run(args: &Args) -> io::Result<()> {
-    if args.workers != 1 {
-        eprintln!("--workers is retained for compatibility; MoraineFS uses one batching writer");
-    }
     let checkpointer = build_checkpointer(args)?;
     let rename_recovery = checkpointer.recover_pending_renames(args.recover_incomplete_renames)?;
     let (startup_seen, startup_dirty, startup_pruned) = checkpointer.scan_existing()?;
     println!(
         "checkpoint daemon ready socket={} root={} mode=batch batch_max_files={} batch_delay={} settle_delay={} durability={:?} rename_recovery={rename_recovery:?} startup_seen={startup_seen} startup_dirty={startup_dirty} startup_pruned={startup_pruned}",
         args.socket.display(),
-        checkpointer.layout().writeback_root.display(),
+        checkpointer.layout().overlay_root.display(),
         args.batch_max_files,
         args.batch_delay,
         args.settle_delay,
@@ -106,22 +99,24 @@ fn run(args: &Args) -> io::Result<()> {
 
 fn build_checkpointer(args: &Args) -> io::Result<Arc<Checkpointer>> {
     let layout = Layout {
-        writeback_root: args.root.clone(),
-        state_root: args.state_root.clone(),
-        namespace_root: args.namespace_root.clone(),
-        rename_root: args.rename_root.clone(),
-        source_prefix: args.source_prefix.clone(),
+        overlay_root: args.overlay_root.clone(),
+        source_root: args.source_root.clone(),
     };
     for root in [
-        &layout.writeback_root,
-        &layout.state_root,
-        &layout.namespace_root,
-        &layout.rename_root,
+        &layout.overlay_root,
+        &args.generation_root,
+        &args.journal_root,
     ] {
         fs::create_dir_all(root)?;
     }
-    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(layout.clone()));
-    let journal = Arc::new(FileNamespaceJournal::new(layout.clone()));
+    let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(
+        layout.clone(),
+        args.generation_root.clone(),
+    ));
+    let journal = Arc::new(FileNamespaceJournal::new(
+        layout.clone(),
+        args.journal_root.clone(),
+    ));
     Ok(Arc::new(Checkpointer::new(
         layout,
         store,

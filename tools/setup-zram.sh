@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MOUNT=/mnt/io-tier-zram-full
-STATE=/run/io-tierfs-zram.state
+MOUNT=/mnt/morainefs-hot
+STATE=/run/morainefs/zram.state
 LOGICAL_BYTES=1073741824
 MEM_LIMIT_BYTES=209715200
 ALGO=lz4hc

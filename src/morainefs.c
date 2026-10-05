@@ -192,17 +192,17 @@ static bool lo_debug(fuse_req_t req)
 	return lo_data(req)->debug != 0;
 }
 
-#define DURABLE_WRITEBACK_ROOT "/var/lib/io-tierfs/writeback"
-#define DURABLE_CHECKPOINT_STATE_ROOT "/var/lib/io-tierfs/checkpoint-state"
-#define DURABLE_NAMESPACE_STATE_ROOT "/var/lib/io-tierfs/namespace-state"
-#define DURABLE_RENAME_STATE_ROOT "/var/lib/io-tierfs/rename-state"
-#define DURABLE_CHECKPOINT_SOCKET "/run/io-tierfs-checkpoint.sock"
+#define DURABLE_WRITEBACK_ROOT "/var/lib/morainefs/overlay"
+#define DURABLE_CHECKPOINT_STATE_ROOT "/var/lib/morainefs/metadata/generations"
+#define DURABLE_NAMESPACE_STATE_ROOT "/var/lib/morainefs/metadata/journal"
+#define DURABLE_RENAME_STATE_ROOT "/var/lib/morainefs/metadata/journal"
+#define DURABLE_CHECKPOINT_SOCKET "/run/morainefs/checkpoint.sock"
 
-#define VOLATILE_WRITEBACK_ROOT "/run/io-tierfs-volatile/writeback"
-#define VOLATILE_CHECKPOINT_STATE_ROOT "/run/io-tierfs-volatile/checkpoint-state"
-#define VOLATILE_NAMESPACE_STATE_ROOT "/run/io-tierfs-volatile/namespace-state"
-#define VOLATILE_RENAME_STATE_ROOT "/run/io-tierfs-volatile/rename-state"
-#define VOLATILE_CHECKPOINT_SOCKET "/run/io-tierfs-checkpoint-volatile.sock"
+#define VOLATILE_WRITEBACK_ROOT "/run/morainefs/volatile/overlay"
+#define VOLATILE_CHECKPOINT_STATE_ROOT "/run/morainefs/volatile/metadata/generations"
+#define VOLATILE_NAMESPACE_STATE_ROOT "/run/morainefs/volatile/metadata/journal"
+#define VOLATILE_RENAME_STATE_ROOT "/run/morainefs/volatile/metadata/journal"
+#define VOLATILE_CHECKPOINT_SOCKET "/run/morainefs/volatile/checkpoint.sock"
 
 enum path_policy_kind {
 	PATH_POLICY_DURABLE = 0,
@@ -1875,9 +1875,9 @@ static void lo_fsyncdir(fuse_req_t req, fuse_ino_t ino, int datasync,
 #define MICRO_MAX_SIZE (2 * 1024 * 1024)
 #define WRITEBACK_COPY_MAX_SIZE (4 * 1024 * 1024)
 
-#define MICRO_ROOT "/mnt/io-tier-zram-full"
+#define MICRO_ROOT "/mnt/morainefs-hot"
 
-#define RANGE_CACHE_ROOT "/var/cache/io-tierfs/range-cache"
+#define RANGE_CACHE_ROOT "/var/cache/morainefs/ranges"
 #define RANGE_BLOCK_MIN_SIZE (64ULL * 1024ULL)
 #define RANGE_BLOCK_MID_SIZE (256ULL * 1024ULL)
 #define RANGE_BLOCK_SEQ_SIZE (1024ULL * 1024ULL)
@@ -2713,7 +2713,7 @@ static int lo_open_writeback(fuse_req_t req, fuse_ino_t ino, int flags,
 	if (mkdir_parents(wb_path) == -1)
 		return -1;
 
-	snprintf(tmp_path, sizeof(tmp_path), "%s.io-tier-tmp.%ld.%lu",
+	snprintf(tmp_path, sizeof(tmp_path), "%s.morainefs.tmp.%ld.%lu",
 	         wb_path, (long)getpid(), (unsigned long)pthread_self());
 	out_fd = open(tmp_path, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC,
 	              st.st_mode & 07777);
@@ -2804,7 +2804,7 @@ static void notify_checkpoint_fd(int fd)
 }
 
 #define MICRO_ORIGIN_XATTR "user.io_tier.origin_v1"
-#define MICRO_ADMIT_SOCKET "/run/io-tierfs-admit.sock"
+#define MICRO_ADMIT_SOCKET "/run/morainefs/admit.sock"
 
 struct micro_origin_v1 {
 	uint64_t dev;

@@ -21,6 +21,7 @@ struct Fixture {
     _temp: TempDir,
     cp: Arc<Checkpointer>,
     layout: Layout,
+    journal_root: PathBuf,
 }
 
 impl Fixture {
@@ -37,23 +38,20 @@ impl Fixture {
         let canonical = temp.path().join("canonical");
         fs::create_dir_all(&canonical).unwrap();
         let layout = Layout {
-            writeback_root: temp.path().join("overlay"),
-            state_root: temp.path().join("state"),
-            namespace_root: temp.path().join("namespace"),
-            rename_root: temp.path().join("rename"),
-            source_prefix: canonical,
+            overlay_root: temp.path().join("overlay"),
+            source_root: canonical,
         };
-        for root in [
-            &layout.writeback_root,
-            &layout.state_root,
-            &layout.namespace_root,
-            &layout.rename_root,
-        ] {
+        let metadata_root = temp.path().join("metadata");
+        let journal_root = temp.path().join("journal");
+        for root in [&layout.overlay_root, &metadata_root, &journal_root] {
             fs::create_dir_all(root).unwrap();
         }
-        let store: Arc<dyn MetadataStore> = Arc::new(FileMetadataStore::new(layout.clone()));
-        let journal: Arc<dyn NamespaceJournal> =
-            Arc::new(FileNamespaceJournal::new(layout.clone()));
+        let store: Arc<dyn MetadataStore> =
+            Arc::new(FileMetadataStore::new(layout.clone(), metadata_root));
+        let journal: Arc<dyn NamespaceJournal> = Arc::new(FileNamespaceJournal::new(
+            layout.clone(),
+            journal_root.clone(),
+        ));
         let cp = Arc::new(
             Checkpointer::new(
                 layout.clone(),
@@ -72,11 +70,12 @@ impl Fixture {
             _temp: temp,
             cp,
             layout,
+            journal_root,
         }
     }
 
     fn source(&self, name: impl AsRef<Path>) -> PathBuf {
-        self.layout.source_prefix.join(name)
+        self.layout.source_root.join(name)
     }
 
     fn write(path: &Path, data: &[u8]) {
@@ -87,30 +86,33 @@ impl Fixture {
     }
 
     fn writeback(&self, source: &Path, data: &[u8]) {
-        Self::write(&self.layout.writeback_path(source).unwrap(), data);
+        Self::write(&self.layout.overlay_path(source).unwrap(), data);
+    }
+
+    fn journal_path(&self, source: &Path, suffix: &[u8]) -> PathBuf {
+        self.layout
+            .adapter_path(&self.journal_root, source, suffix)
+            .unwrap()
     }
 
     fn create_marker(&self, source: &Path) {
-        Self::write(
-            &self.layout.create_marker_path(source).unwrap(),
-            b"created-v1\n",
-        );
+        Self::write(&self.journal_path(source, b".created"), b"created-v1\n");
     }
 
     fn rename_marker(&self, old: &Path, new: &Path, ready: bool) {
         Self::write(
-            &self.layout.rename_marker_path(new).unwrap(),
+            &self.journal_path(new, b".rename"),
             old.as_os_str().as_bytes(),
         );
         if ready {
-            Self::write(&self.layout.rename_ready_path(new).unwrap(), b"ready-v1\n");
+            Self::write(&self.journal_path(new, b".rename.ready"), b"ready-v1\n");
         }
     }
 
     fn assert_common(&self, old: &Path, new: &Path) {
-        assert!(!self.layout.writeback_path(old).unwrap().exists());
+        assert!(!self.layout.overlay_path(old).unwrap().exists());
         assert_eq!(
-            fs::read(self.layout.writeback_path(new).unwrap()).unwrap(),
+            fs::read(self.layout.overlay_path(new).unwrap()).unwrap(),
             b"authoritative-overlay"
         );
         assert!(fs::symlink_metadata(old).is_err());
@@ -150,11 +152,11 @@ fn recovery_before_overlay_move_rolls_forward_then_finalizes() {
         .write_generation(&new, prepared.clean_gen)
         .unwrap();
     Fixture::write(
-        &f.layout.rename_dest_backup_path(&new).unwrap(),
+        &f.journal_path(&new, b".rename.dst-overlay"),
         b"stale-destination",
     );
     f.cp.finalize_rename(&new).unwrap();
-    assert!(!f.layout.rename_dest_backup_path(&new).unwrap().exists());
+    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
     assert!(!f.cp.journal.rename_marker_exists(&new).unwrap());
     assert!(!f.cp.journal.rename_ready_exists(&new).unwrap());
     assert!(!f.cp.journal.create_marker_exists(&old).unwrap());
@@ -185,7 +187,7 @@ fn recovery_removes_dirty_destination_backup_before_source_move() {
     Fixture::write(&new, b"old-destination-canonical");
     f.writeback(&old, b"authoritative-overlay");
     Fixture::write(
-        &f.layout.rename_dest_backup_path(&new).unwrap(),
+        &f.journal_path(&new, b".rename.dst-overlay"),
         b"old-destination-overlay",
     );
     f.rename_marker(&old, &new, false);
@@ -194,7 +196,7 @@ fn recovery_removes_dirty_destination_backup_before_source_move() {
         one("recovered_incomplete")
     );
     f.assert_common(&old, &new);
-    assert!(!f.layout.rename_dest_backup_path(&new).unwrap().exists());
+    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
 }
 
 #[test]
@@ -206,7 +208,7 @@ fn recovery_removes_dirty_destination_backup_after_source_move() {
     Fixture::write(&new, b"old-destination-canonical");
     f.writeback(&new, b"authoritative-overlay");
     Fixture::write(
-        &f.layout.rename_dest_backup_path(&new).unwrap(),
+        &f.journal_path(&new, b".rename.dst-overlay"),
         b"old-destination-overlay",
     );
     f.rename_marker(&old, &new, false);
@@ -215,7 +217,7 @@ fn recovery_removes_dirty_destination_backup_after_source_move() {
         one("recovered_incomplete")
     );
     f.assert_common(&old, &new);
-    assert!(!f.layout.rename_dest_backup_path(&new).unwrap().exists());
+    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
 }
 
 #[test]
@@ -285,9 +287,9 @@ fn deleted_completed_transaction_is_pruned() {
 fn orphan_rename_auxiliaries_are_pruned() {
     let f = Fixture::new(Durability::File);
     let new = f.source("final");
-    Fixture::write(&f.layout.rename_ready_path(&new).unwrap(), b"ready-v1\n");
+    Fixture::write(&f.journal_path(&new, b".rename.ready"), b"ready-v1\n");
     Fixture::write(
-        &f.layout.rename_dest_backup_path(&new).unwrap(),
+        &f.journal_path(&new, b".rename.dst-overlay"),
         b"orphan-destination",
     );
     assert_eq!(
@@ -298,7 +300,7 @@ fn orphan_rename_auxiliaries_are_pruned() {
         ])
     );
     assert!(!f.cp.journal.rename_ready_exists(&new).unwrap());
-    assert!(!f.layout.rename_dest_backup_path(&new).unwrap().exists());
+    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
 }
 
 #[test]
@@ -472,8 +474,8 @@ fn later_event_extends_settle_deadline() {
 fn delete_before_settle_never_materializes() {
     let f = Fixture::new_with_settle(Durability::File, Duration::from_millis(150));
     let source = f.source("gone");
-    let overlay = f.layout.writeback_path(&source).unwrap();
-    let marker = f.layout.create_marker_path(&source).unwrap();
+    let overlay = f.layout.overlay_path(&source).unwrap();
+    let marker = f.journal_path(&source, b".created");
     Fixture::write(&overlay, b"temporary");
     Fixture::write(&marker, b"created-v1\n");
     let cp = Arc::clone(&f.cp);
@@ -501,7 +503,7 @@ fn deleted_before_checkpoint_never_materializes() {
     let f = Fixture::new(Durability::File);
     let source = f.source("file");
     f.writeback(&source, b"transient");
-    fs::remove_file(f.layout.writeback_path(&source).unwrap()).unwrap();
+    fs::remove_file(f.layout.overlay_path(&source).unwrap()).unwrap();
     let (status, prepared) = f.cp.prepare_copy(&source, 0);
     assert_eq!(status, PrepareStatus::OverlayMissing);
     assert!(prepared.is_none());

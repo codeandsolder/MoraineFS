@@ -6,6 +6,8 @@ use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use walkdir::WalkDir;
+
 use crate::paths::Layout;
 
 static TEMP_SERIAL: AtomicU64 = AtomicU64::new(0);
@@ -38,21 +40,23 @@ pub trait MetadataStore: Send + Sync {
     fn read_generation(&self, source: &Path) -> io::Result<Option<Generation>>;
     fn write_generation(&self, source: &Path, generation: Generation) -> io::Result<()>;
     fn remove_generation(&self, source: &Path) -> io::Result<()>;
+    fn sources(&self) -> io::Result<Vec<PathBuf>>;
 }
 
 #[derive(Debug, Clone)]
 pub struct FileMetadataStore {
     layout: Layout,
+    root: PathBuf,
 }
 
 impl FileMetadataStore {
     #[must_use]
-    pub const fn new(layout: Layout) -> Self {
-        Self { layout }
+    pub const fn new(layout: Layout, root: PathBuf) -> Self {
+        Self { layout, root }
     }
 
-    pub fn path_for(&self, source: &Path) -> io::Result<PathBuf> {
-        self.layout.state_path(source)
+    fn path_for(&self, source: &Path) -> io::Result<PathBuf> {
+        self.layout.adapter_path(&self.root, source, b".state")
     }
 }
 
@@ -119,6 +123,46 @@ impl MetadataStore for FileMetadataStore {
 
     fn remove_generation(&self, source: &Path) -> io::Result<()> {
         remove_if_exists(&self.path_for(source)?)
+    }
+
+    fn sources(&self) -> io::Result<Vec<PathBuf>> {
+        if !self.root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut sources = Vec::new();
+        for entry in WalkDir::new(&self.root).follow_links(false) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if let Some(io_error) = error.io_error()
+                        && io_error.kind() != io::ErrorKind::NotFound
+                    {
+                        return Err(io::Error::new(io_error.kind(), io_error.to_string()));
+                    }
+                    continue;
+                }
+            };
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let name = entry.file_name().as_bytes();
+            let Some(base) = name.strip_suffix(b".state") else {
+                continue;
+            };
+            let relative = entry.path().strip_prefix(&self.root).map_err(|_| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "state path outside metadata root",
+                )
+            })?;
+            let key = relative.with_file_name(OsString::from_vec(base.to_vec()));
+            if let Ok(source) = self.layout.source_from_storage_key(&key) {
+                sources.push(source);
+            }
+        }
+        sources.sort();
+        sources.dedup();
+        Ok(sources)
     }
 }
 
