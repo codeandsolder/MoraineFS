@@ -2627,8 +2627,14 @@ static int create_writeback_for_source(const char *source_path, int flags,
 		return -1;
 
 	if (fstat(canonical_fd, &st) == 0) {
-		(void)fchmod(fd, st.st_mode & 07777);
-		(void)fchown(fd, st.st_uid, st.st_gid);
+		if (fchmod(fd, st.st_mode & 07777) == -1 ||
+		    fchown(fd, st.st_uid, st.st_gid) == -1) {
+			saved = errno;
+			close(fd);
+			(void)unlink(wb_path);
+			errno = saved;
+			return -1;
+		}
 	}
 
 	/*
@@ -2720,8 +2726,9 @@ static int lo_open_writeback(fuse_req_t req, fuse_ino_t ino, int flags,
 		if (in_fd == -1 || copy_small_file(in_fd, out_fd, st.st_size) == -1)
 			goto fail;
 	}
-	(void)fchmod(out_fd, st.st_mode & 07777);
-	(void)fchown(out_fd, st.st_uid, st.st_gid);
+	if (fchmod(out_fd, st.st_mode & 07777) == -1 ||
+	    fchown(out_fd, st.st_uid, st.st_gid) == -1)
+		goto fail;
 	if (fsync(out_fd) == -1)
 		goto fail;
 	if (in_fd != -1) {

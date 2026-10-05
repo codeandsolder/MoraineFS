@@ -18,7 +18,8 @@ This repository is the canonical development source. It is still experimental. T
 
 ## Build and checks
 
-Requires libfuse3 development headers, `pkg-config`, GCC, and `uv`.
+Requires libfuse >= 3.17.2 (passthrough support), `pkg-config`, GCC, and `uv`.
+CI also builds against the current libfuse release rather than Ubuntu's older packaged copy.
 
 ```sh
 uv sync --locked

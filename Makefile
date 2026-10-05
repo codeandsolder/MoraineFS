@@ -1,6 +1,7 @@
 CC ?= gcc
 UV ?= uv
 PKG_CONFIG ?= pkg-config
+MIN_LIBFUSE_VERSION ?= 3.17.2
 
 CPPFLAGS += -Isrc
 CFLAGS += -std=gnu11 -O2 -g3 \
@@ -10,11 +11,15 @@ CFLAGS += -std=gnu11 -O2 -g3 \
 FUSE_CFLAGS := $(shell $(PKG_CONFIG) fuse3 --cflags)
 FUSE_LIBS := $(shell $(PKG_CONFIG) fuse3 --libs)
 
-.PHONY: all build lint format test check clean
+.PHONY: all build check-libfuse lint format test check clean
 
 all: build
 
-build: build/morainefs
+build: check-libfuse build/morainefs
+
+check-libfuse:
+	@$(PKG_CONFIG) --atleast-version=$(MIN_LIBFUSE_VERSION) fuse3 || \
+		{ echo "MoraineFS requires libfuse >= $(MIN_LIBFUSE_VERSION)" >&2; exit 1; }
 
 build/morainefs: src/morainefs.c src/passthrough_helpers.h
 	@mkdir -p build
