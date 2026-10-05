@@ -6,7 +6,7 @@ The current implementation is the consolidated successor to the `io-tierfs` prot
 
 ## Status
 
-This repository is the canonical development source and is still experimental. The existing cold-storage deployment intentionally continues to use its `io-tierfs` runtime paths and services until a separately validated promotion; changing this repository does not replace or restart that deployment.
+This repository is the canonical development source and is still experimental. The cold-storage host has promoted the Rust control plane while deliberately retaining the existing `io-tierfs` unit, socket, and state-path identities through compatibility drop-ins tracked under `deploy/systemd`. Renaming those runtime identities and promoting a canonical MoraineFS foreground mount remain separate operations. Repository changes do not deploy themselves.
 
 The Rust control plane deliberately does **not** commit us to a tiny-object or metadata database yet. Checkpoint generation state is behind `MetadataStore`, and hot micro-object storage is behind `MicroStore`. File/directory-backed implementations preserve the current prototype layout while the database benchmark determines the permanent backend.
 
@@ -19,6 +19,10 @@ The Rust control plane deliberately does **not** commit us to a tiny-object or m
 - **Policy:** longest-prefix `durable` / `volatile` rules today, evolving toward generic per-tier placement and acknowledgement requirements rather than hard-coded media names.
 - **Durability:** foreground acknowledgement and background convergence are separate concerns. Volatile trees may deliberately lose uncheckpointed state.
 - **Backend seams:** metadata and micro-object persistence are traits so the database benchmark can select an implementation without changing checkpoint or admission semantics.
+
+## Deployment compatibility
+
+The current cold-storage promotion installs the Rust release binaries under `/usr/local/libexec/morainefs/` and uses the drop-ins in `deploy/systemd/` to override only `ExecStart` on the existing `io-tierfs` services. Socket and state paths remain unchanged, so the compatibility boundary is explicit and rollback stays simple: remove the corresponding `rust.conf`, reload systemd, and restart the service.
 
 ## Build and checks
 
@@ -39,6 +43,7 @@ make check
 - `src/journal.rs` — namespace intent abstraction and current file-backed adapter.
 - `src/range_gc.rs` — stale per-process range-cache collection.
 - `src/bin/` — `moraine-checkpoint`, `moraine-admit`, and `moraine-range-cache-gc` entry points.
+- `deploy/systemd/` — compatibility drop-ins for the current cold-storage Rust control-plane promotion.
 - `tools/setup-zram.sh` — current zram helper.
 - `config/policy.example.conf` — current prefix-policy syntax.
 
