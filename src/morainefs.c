@@ -733,8 +733,8 @@ static int fill_entry_param_new_inode(fuse_req_t req, fuse_ino_t parent, int fd,
 	e->ino = (uintptr_t) create_new_inode(dup(fd), e, lo);
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "  %lli/%lli -> %lli\n",
-			(unsigned long long) parent, fd, (unsigned long long) e->ino);
+		fuse_log(FUSE_LOG_DEBUG, "  %" PRIu64 "/%d -> %" PRIu64 "\n",
+			(uint64_t)parent, fd, (uint64_t)e->ino);
 
 	return 0;
 
@@ -802,8 +802,8 @@ static int lo_do_lookup(fuse_req_t req, fuse_ino_t parent, const char *name,
 	e->ino = (uintptr_t) inode;
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "  %lli/%s -> %lli%s\n",
-			(unsigned long long) parent, name, (unsigned long long) e->ino,
+		fuse_log(FUSE_LOG_DEBUG, "  %" PRIu64 "/%s -> %" PRIu64 "%s\n",
+			(uint64_t)parent, name, (uint64_t)e->ino,
 			upper_only ? " upper-only" : "");
 
 	return 0;
@@ -851,8 +851,8 @@ static void lo_mknod_symlink(fuse_req_t req, fuse_ino_t parent,
 		goto out;
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "  %lli/%s -> %lli\n",
-			(unsigned long long) parent, name, (unsigned long long) e.ino);
+		fuse_log(FUSE_LOG_DEBUG, "  %" PRIu64 "/%s -> %" PRIu64 "\n",
+			(uint64_t)parent, name, (uint64_t)e.ino);
 
 	fuse_reply_entry(req, &e);
 	return;
@@ -920,9 +920,9 @@ static void lo_link(fuse_req_t req, fuse_ino_t ino, fuse_ino_t parent,
 	e.ino = (uintptr_t) inode;
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "  %lli/%s -> %lli\n",
-			(unsigned long long) parent, name,
-			(unsigned long long) e.ino);
+		fuse_log(FUSE_LOG_DEBUG, "  %" PRIu64 "/%s -> %" PRIu64 "\n",
+			(uint64_t)parent, name,
+			(uint64_t)e.ino);
 
 	fuse_reply_entry(req, &e);
 	return;
@@ -1422,10 +1422,10 @@ static void lo_forget_one(fuse_req_t req, fuse_ino_t ino, uint64_t nlookup)
 	struct lo_inode *inode = lo_inode(req, ino);
 
 	if (lo_debug(req)) {
-		fuse_log(FUSE_LOG_DEBUG, "  forget %lli %lli -%lli\n",
-			(unsigned long long) ino,
-			(unsigned long long) inode->refcount,
-			(unsigned long long) nlookup);
+		fuse_log(FUSE_LOG_DEBUG,
+			"  forget %" PRIu64 " %" PRIu64 " -%" PRIu64 "\n",
+			(uint64_t)ino, inode->refcount,
+			nlookup);
 	}
 
 	unref_inode(lo, inode, nlookup);
@@ -3071,8 +3071,8 @@ static void lo_read(fuse_req_t req, fuse_ino_t ino, size_t size,
 	struct fuse_bufvec buf = FUSE_BUFVEC_INIT(size);
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "lo_read(ino=%" PRIu64 ", size=%zd, "
-			"off=%lu)\n", ino, size, (unsigned long) offset);
+		fuse_log(FUSE_LOG_DEBUG, "lo_read(ino=%" PRIu64 ", size=%zu, "
+			"off=%jd)\n", (uint64_t)ino, size, (intmax_t)offset);
 
 	size_t range_block_size =
 		range_block_size_for_read((int)fi->fh, offset, size);
@@ -3100,8 +3100,8 @@ static void lo_write_buf(fuse_req_t req, fuse_ino_t ino,
 	out_buf.buf[0].pos = off;
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "lo_write(ino=%" PRIu64 ", size=%zd, off=%lu)\n",
-			ino, out_buf.buf[0].size, (unsigned long) off);
+		fuse_log(FUSE_LOG_DEBUG, "lo_write(ino=%" PRIu64 ", size=%zu, off=%jd)\n",
+			(uint64_t)ino, out_buf.buf[0].size, (intmax_t)off);
 
 	res = fuse_buf_copy(&out_buf, in_buf, 0);
 	if(res < 0)
@@ -3174,8 +3174,8 @@ static void lo_getxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 		goto out;
 
 	if (lo_debug(req)) {
-		fuse_log(FUSE_LOG_DEBUG, "lo_getxattr(ino=%" PRIu64 ", name=%s size=%zd)\n",
-			ino, name, size);
+		fuse_log(FUSE_LOG_DEBUG, "lo_getxattr(ino=%" PRIu64 ", name=%s size=%zu)\n",
+			(uint64_t)ino, name, size);
 	}
 
 	sprintf(procname, "/proc/self/fd/%i", inode->fd);
@@ -3224,8 +3224,8 @@ static void lo_listxattr(fuse_req_t req, fuse_ino_t ino, size_t size)
 		goto out;
 
 	if (lo_debug(req)) {
-		fuse_log(FUSE_LOG_DEBUG, "lo_listxattr(ino=%" PRIu64 ", size=%zd)\n",
-			ino, size);
+		fuse_log(FUSE_LOG_DEBUG, "lo_listxattr(ino=%" PRIu64 ", size=%zu)\n",
+			(uint64_t)ino, size);
 	}
 
 	sprintf(procname, "/proc/self/fd/%i", inode->fd);
@@ -3274,8 +3274,8 @@ static void lo_setxattr(fuse_req_t req, fuse_ino_t ino, const char *name,
 		goto out;
 
 	if (lo_debug(req)) {
-		fuse_log(FUSE_LOG_DEBUG, "lo_setxattr(ino=%" PRIu64 ", name=%s value=%s size=%zd)\n",
-			ino, name, value, size);
+		fuse_log(FUSE_LOG_DEBUG, "lo_setxattr(ino=%" PRIu64 ", name=%s value=%s size=%zu)\n",
+			(uint64_t)ino, name, value, size);
 	}
 
 	sprintf(procname, "/proc/self/fd/%i", inode->fd);
@@ -3300,7 +3300,7 @@ static void lo_removexattr(fuse_req_t req, fuse_ino_t ino, const char *name)
 
 	if (lo_debug(req)) {
 		fuse_log(FUSE_LOG_DEBUG, "lo_removexattr(ino=%" PRIu64 ", name=%s)\n",
-			ino, name);
+			(uint64_t)ino, name);
 	}
 
 	sprintf(procname, "/proc/self/fd/%i", inode->fd);
@@ -3322,10 +3322,12 @@ static void lo_copy_file_range(fuse_req_t req, fuse_ino_t ino_in, off_t off_in,
 	ssize_t res;
 
 	if (lo_debug(req))
-		fuse_log(FUSE_LOG_DEBUG, "lo_copy_file_range(ino=%" PRIu64 "/fd=%lu, "
-				"off=%lu, ino=%" PRIu64 "/fd=%lu, "
-				"off=%lu, size=%zd, flags=0x%x)\n",
-			ino_in, fi_in->fh, off_in, ino_out, fi_out->fh, off_out,
+		fuse_log(FUSE_LOG_DEBUG,
+			"lo_copy_file_range(ino=%" PRIu64 "/fd=%" PRIu64 ", "
+			"off=%jd, ino=%" PRIu64 "/fd=%" PRIu64 ", "
+			"off=%jd, size=%zu, flags=0x%x)\n",
+			(uint64_t)ino_in, (uint64_t)fi_in->fh, (intmax_t)off_in,
+			(uint64_t)ino_out, (uint64_t)fi_out->fh, (intmax_t)off_out,
 			len, flags);
 
 	res = copy_file_range(fi_in->fh, &off_in, fi_out->fh, &off_out, len,
