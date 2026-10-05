@@ -22,7 +22,7 @@ const COPY_CHUNK: usize = 1024 * 1024;
 static TEMP_SERIAL: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct OriginFingerprint {
+struct OriginFingerprint {
     pub dev: u64,
     pub ino: u64,
     pub size: u64,
@@ -34,7 +34,7 @@ pub struct OriginFingerprint {
 
 impl OriginFingerprint {
     #[must_use]
-    pub fn from_metadata(metadata: &fs::Metadata) -> Self {
+    fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
             dev: metadata.dev(),
             ino: metadata.ino(),
@@ -47,7 +47,7 @@ impl OriginFingerprint {
     }
 
     #[must_use]
-    pub fn encode(self) -> [u8; 56] {
+    fn encode(self) -> [u8; 56] {
         let mut out = [0_u8; 56];
         let fields = [self.dev, self.ino, self.size];
         for (index, value) in fields.into_iter().enumerate() {
@@ -83,12 +83,12 @@ pub struct AdmissionStats {
 }
 
 impl AdmissionStats {
-    pub fn bump(&mut self, key: &str) {
+    fn bump(&mut self, key: &str) {
         let counter = self.counters.entry(key.to_owned()).or_default();
         *counter = counter.saturating_add(1);
     }
 
-    pub fn add(&mut self, key: &str, value: u64) {
+    fn add(&mut self, key: &str, value: u64) {
         let counter = self.counters.entry(key.to_owned()).or_default();
         *counter = counter.saturating_add(value);
     }
@@ -129,7 +129,7 @@ impl DirectoryMicroStore {
         Ok(Self { root, mm_stat })
     }
 
-    pub fn destination(&self, source: &Path) -> io::Result<PathBuf> {
+    fn destination(&self, source: &Path) -> io::Result<PathBuf> {
         if !source.is_absolute() {
             return Err(io::Error::new(
                 ErrorKind::InvalidInput,
@@ -184,8 +184,9 @@ impl MicroStore for DirectoryMicroStore {
         let mut temp_name = Vec::with_capacity(name.as_bytes().len() + 56);
         temp_name.push(b'.');
         temp_name.extend_from_slice(name.as_bytes());
-        temp_name
-            .extend_from_slice(format!(".io-tier.tmp.{}.{serial}", std::process::id()).as_bytes());
+        temp_name.extend_from_slice(
+            format!(".morainefs.tmp.{}.{serial}", std::process::id()).as_bytes(),
+        );
         let temp = parent.join(OsString::from_vec(temp_name));
         let mut output = OpenOptions::new()
             .write(true)
@@ -294,7 +295,7 @@ impl MicroStore for DirectoryMicroStore {
                 let path = child.path();
                 if path
                     .file_name()
-                    .is_some_and(|name| name.to_string_lossy().contains(".io-tier.tmp."))
+                    .is_some_and(|name| name.to_string_lossy().contains(".morainefs.tmp."))
                 {
                     continue;
                 }

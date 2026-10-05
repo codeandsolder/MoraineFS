@@ -11,14 +11,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use clap::{Parser, Subcommand};
-use morainefs_control::admission::{
+use morainefs::{
     AdmissionPolicy, AdmissionStats, AdmissionWorker, DirectoryMicroStore, MicroStore,
 };
 
 #[derive(Debug, Parser)]
 #[command(about = "MoraineFS hot-tier admission worker")]
 struct Args {
-    #[arg(long, default_value = "/mnt/io-tier-zram-full")]
+    #[arg(long, default_value = "/mnt/morainefs-hot")]
     micro_root: PathBuf,
     #[arg(long, default_value_t = 2 * 1024 * 1024)]
     max_size: u64,
@@ -42,7 +42,7 @@ enum Command {
         directory: PathBuf,
     },
     Serve {
-        #[arg(long, default_value = "/run/io-tierfs-admit.sock")]
+        #[arg(long, default_value = "/run/morainefs/admit.sock")]
         socket: PathBuf,
         #[arg(long, default_value_t = 2.0)]
         cooldown: f64,

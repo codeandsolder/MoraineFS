@@ -73,29 +73,24 @@ fn terminate_and_expect_success(mut child: Child, socket: &Path) -> TestResult {
 fn checkpoint_handles_sigterm_gracefully() -> TestResult {
     let temp = TempDir::new()?;
     let source = temp.path().join("source");
-    let writeback = temp.path().join("writeback");
-    let state = temp.path().join("state");
-    let namespace = temp.path().join("namespace");
-    let rename = temp.path().join("rename");
+    let overlay = temp.path().join("overlay");
+    let generations = temp.path().join("generations");
+    let journal = temp.path().join("journal");
     let socket = temp.path().join("checkpoint.sock");
-    for path in [&source, &writeback, &state, &namespace, &rename] {
+    for path in [&source, &overlay, &generations, &journal] {
         fs::create_dir_all(path)?;
     }
-    let source_prefix = format!("{}/", source.display());
-
     let child = Command::new(env!("CARGO_BIN_EXE_moraine-checkpoint"))
-        .arg("--root")
-        .arg(&writeback)
-        .arg("--state-root")
-        .arg(&state)
-        .arg("--namespace-root")
-        .arg(&namespace)
-        .arg("--rename-root")
-        .arg(&rename)
+        .arg("--overlay-root")
+        .arg(&overlay)
+        .arg("--generation-root")
+        .arg(&generations)
+        .arg("--journal-root")
+        .arg(&journal)
         .arg("--socket")
         .arg(&socket)
-        .arg("--source-prefix")
-        .arg(source_prefix)
+        .arg("--source-root")
+        .arg(&source)
         .arg("--durability")
         .arg("file")
         .stdout(Stdio::null())
@@ -115,8 +110,6 @@ fn admission_server_handles_sigterm_gracefully() -> TestResult {
     let child = Command::new(env!("CARGO_BIN_EXE_moraine-admit"))
         .arg("--micro-root")
         .arg(&micro_root)
-        .arg("--workers")
-        .arg("1")
         .arg("serve")
         .arg("--socket")
         .arg(&socket)

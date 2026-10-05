@@ -5,9 +5,16 @@ use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::path::{Path, PathBuf};
 
 use rustix::fs::{Mode, OFlags, open};
+use walkdir::WalkDir;
 
 use crate::paths::Layout;
 use crate::store::{remove_if_exists, sync_directory};
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct JournalCleanup {
+    pub orphan_ready_pruned: u64,
+    pub orphan_backup_pruned: u64,
+}
 
 pub trait NamespaceJournal: Send + Sync {
     fn create_marker_exists(&self, source: &Path) -> io::Result<bool>;
@@ -19,23 +26,28 @@ pub trait NamespaceJournal: Send + Sync {
     fn clear_rename_ready(&self, destination: &Path) -> io::Result<()>;
     fn clear_rename_marker(&self, destination: &Path) -> io::Result<()>;
     fn remove_destination_backup(&self, destination: &Path) -> io::Result<()>;
-    fn destination_backup_path(&self, destination: &Path) -> io::Result<PathBuf>;
-    fn rename_root(&self) -> &Path;
+    fn pending_renames(&self) -> io::Result<Vec<PathBuf>>;
+    fn prune_orphans(&self) -> io::Result<JournalCleanup>;
 }
 
 #[derive(Debug, Clone)]
 pub struct FileNamespaceJournal {
     layout: Layout,
+    root: PathBuf,
 }
 
 impl FileNamespaceJournal {
     #[must_use]
-    pub const fn new(layout: Layout) -> Self {
-        Self { layout }
+    pub const fn new(layout: Layout, root: PathBuf) -> Self {
+        Self { layout, root }
     }
 
     fn marker_is_file(path: &Path) -> bool {
         fs::metadata(path).is_ok_and(|metadata| metadata.is_file())
+    }
+
+    fn marker_path(&self, source: &Path, suffix: &[u8]) -> io::Result<PathBuf> {
+        self.layout.adapter_path(&self.root, source, suffix)
     }
 
     fn validate_rename_source(&self, raw: Vec<u8>, destination: &Path) -> Option<PathBuf> {
@@ -44,7 +56,7 @@ impl FileNamespaceJournal {
         }
         let path = PathBuf::from(OsString::from_vec(raw));
         if !path.is_absolute()
-            || !path.starts_with(&self.layout.source_prefix)
+            || !path.starts_with(&self.layout.source_root)
             || path == destination
             || !is_normalized_absolute(&path)
         {
@@ -52,34 +64,93 @@ impl FileNamespaceJournal {
         }
         Some(path)
     }
+
+    fn source_from_marker(&self, marker: &Path, suffix: &[u8]) -> io::Result<PathBuf> {
+        let relative = marker.strip_prefix(&self.root).map_err(|_| {
+            io::Error::new(io::ErrorKind::InvalidData, "marker outside rename root")
+        })?;
+        let name = relative
+            .file_name()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "marker has no file name"))?;
+        let base = name
+            .as_bytes()
+            .strip_suffix(suffix)
+            .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "marker suffix mismatch"))?;
+        self.layout
+            .source_from_storage_key(&relative.with_file_name(OsString::from_vec(base.to_vec())))
+    }
+
+    fn collect_suffix_files(&self, suffix: &[u8]) -> io::Result<Vec<PathBuf>> {
+        if !self.root.exists() {
+            return Ok(Vec::new());
+        }
+        let mut result = Vec::new();
+        for entry in WalkDir::new(&self.root).follow_links(false) {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    if let Some(io_error) = error.io_error()
+                        && io_error.kind() != io::ErrorKind::NotFound
+                    {
+                        return Err(io::Error::new(io_error.kind(), io_error.to_string()));
+                    }
+                    continue;
+                }
+            };
+            if entry.file_type().is_file() && entry.file_name().as_bytes().ends_with(suffix) {
+                result.push(entry.into_path());
+            }
+        }
+        Ok(result)
+    }
+
+    fn prune_suffix(&self, suffix: &[u8], marker_suffix: &[u8]) -> io::Result<u64> {
+        let mut removed = 0_u64;
+        for path in self.collect_suffix_files(suffix)? {
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let Some(base) = name.as_bytes().strip_suffix(suffix) else {
+                continue;
+            };
+            let mut marker_name = base.to_vec();
+            marker_name.extend_from_slice(marker_suffix);
+            let marker = path.with_file_name(OsString::from_vec(marker_name));
+            if marker.exists() || fs::remove_file(&path).is_err() {
+                continue;
+            }
+            if let Some(parent) = path.parent() {
+                sync_directory(parent)?;
+            }
+            removed = removed.saturating_add(1);
+        }
+        Ok(removed)
+    }
 }
 
 impl NamespaceJournal for FileNamespaceJournal {
     fn create_marker_exists(&self, source: &Path) -> io::Result<bool> {
         Ok(Self::marker_is_file(
-            &self.layout.create_marker_path(source)?,
+            &self.marker_path(source, b".created")?,
         ))
     }
 
     fn clear_create_marker(&self, source: &Path) -> io::Result<()> {
-        let path = self.layout.create_marker_path(source)?;
-        remove_and_sync_parent(&path)
+        remove_and_sync_parent(&self.marker_path(source, b".created")?)
     }
 
     fn rename_marker_exists(&self, source: &Path) -> io::Result<bool> {
-        Ok(Self::marker_is_file(
-            &self.layout.rename_marker_path(source)?,
-        ))
+        Ok(Self::marker_is_file(&self.marker_path(source, b".rename")?))
     }
 
     fn rename_ready_exists(&self, source: &Path) -> io::Result<bool> {
         Ok(Self::marker_is_file(
-            &self.layout.rename_ready_path(source)?,
+            &self.marker_path(source, b".rename.ready")?,
         ))
     }
 
     fn read_rename_source(&self, destination: &Path) -> io::Result<Option<PathBuf>> {
-        let marker = self.layout.rename_marker_path(destination)?;
+        let marker = self.marker_path(destination, b".rename")?;
         let Ok(raw) = fs::read(marker) else {
             return Ok(None);
         };
@@ -87,7 +158,7 @@ impl NamespaceJournal for FileNamespaceJournal {
     }
 
     fn mark_rename_ready(&self, destination: &Path) -> io::Result<()> {
-        let path = self.layout.rename_ready_path(destination)?;
+        let path = self.marker_path(destination, b".rename.ready")?;
         let parent = parent(&path)?;
         fs::create_dir_all(parent)?;
         let mut file = open(
@@ -104,26 +175,32 @@ impl NamespaceJournal for FileNamespaceJournal {
     }
 
     fn clear_rename_ready(&self, destination: &Path) -> io::Result<()> {
-        let path = self.layout.rename_ready_path(destination)?;
-        remove_and_sync_parent(&path)
+        remove_and_sync_parent(&self.marker_path(destination, b".rename.ready")?)
     }
 
     fn clear_rename_marker(&self, destination: &Path) -> io::Result<()> {
-        let path = self.layout.rename_marker_path(destination)?;
-        remove_and_sync_parent(&path)
+        remove_and_sync_parent(&self.marker_path(destination, b".rename")?)
     }
 
     fn remove_destination_backup(&self, destination: &Path) -> io::Result<()> {
-        let path = self.layout.rename_dest_backup_path(destination)?;
-        remove_and_sync_parent(&path)
+        remove_and_sync_parent(&self.marker_path(destination, b".rename.dst-overlay")?)
     }
 
-    fn destination_backup_path(&self, destination: &Path) -> io::Result<PathBuf> {
-        self.layout.rename_dest_backup_path(destination)
+    fn pending_renames(&self) -> io::Result<Vec<PathBuf>> {
+        let mut destinations = self
+            .collect_suffix_files(b".rename")?
+            .into_iter()
+            .filter_map(|marker| self.source_from_marker(&marker, b".rename").ok())
+            .collect::<Vec<_>>();
+        destinations.sort();
+        Ok(destinations)
     }
 
-    fn rename_root(&self) -> &Path {
-        &self.layout.rename_root
+    fn prune_orphans(&self) -> io::Result<JournalCleanup> {
+        Ok(JournalCleanup {
+            orphan_ready_pruned: self.prune_suffix(b".rename.ready", b".rename")?,
+            orphan_backup_pruned: self.prune_suffix(b".rename.dst-overlay", b".rename")?,
+        })
     }
 }
 
