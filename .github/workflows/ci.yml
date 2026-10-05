@@ -41,7 +41,7 @@ jobs:
           echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
       - uses: astral-sh/setup-uv@v10.2.0
         with:
-          version: "0.12.19"
+          version: "0.12.22"
           enable-cache: true
       - name: Sync Python tooling
         run: uv sync --locked
