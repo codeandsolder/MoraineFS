@@ -1,8 +1,9 @@
 use std::cmp::Reverse;
 use std::collections::{BTreeSet, BinaryHeap, HashMap, HashSet};
+use std::ffi::OsString;
 use std::fs::{self, File};
 use std::io::{self, ErrorKind};
-use std::os::unix::ffi::OsStrExt;
+use std::os::unix::ffi::{OsStrExt, OsStringExt};
 use std::os::unix::fs::{FileExt, MetadataExt};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -14,6 +15,7 @@ use rustix::fs::{
     Gid, Mode, OFlags, Timespec, Timestamps, Uid, fchmod, fchown, futimens, open, syncfs,
 };
 use walkdir::WalkDir;
+use xattr::FileExt as XattrFileExt;
 
 use crate::journal::NamespaceJournal;
 use crate::paths::Layout;
@@ -332,6 +334,7 @@ impl Checkpointer {
             offset = offset.saturating_add(u64::try_from(read).unwrap_or(0));
         }
         canonical_file.set_len(before_gen.size)?;
+        copy_xattrs_best_effort(&overlay_file, &canonical_file);
         apply_metadata_best_effort(&canonical_file, &before);
 
         let mut sync_dirs = BTreeSet::new();
@@ -434,7 +437,7 @@ impl Checkpointer {
         if self.journal.rename_ready_exists(source)? {
             self.journal.clear_rename_ready(source)?;
         }
-        self.journal.remove_destination_backup(source)?;
+        remove_if_exists(&self.layout.rename_backup_path(source)?)?;
         self.journal.clear_rename_marker(source)
     }
 
@@ -463,9 +466,43 @@ impl Checkpointer {
         bump_by(
             &mut counts,
             "orphan_backup_pruned",
-            cleanup.orphan_backup_pruned,
+            self.prune_overlay_backups()?,
         );
         Ok(counts)
+    }
+
+    fn prune_overlay_backups(&self) -> io::Result<u64> {
+        let root = self.layout.transaction_root();
+        if !root.exists() {
+            return Ok(0);
+        }
+        let mut removed = 0_u64;
+        for entry in WalkDir::new(&root)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(Result::ok)
+        {
+            if !entry.file_type().is_file() {
+                continue;
+            }
+            let Some(base) = entry.file_name().as_bytes().strip_suffix(b".rename-backup") else {
+                continue;
+            };
+            let Ok(relative) = entry.path().strip_prefix(&root) else {
+                continue;
+            };
+            let key = relative.with_file_name(OsString::from_vec(base.to_vec()));
+            let Ok(destination) = self.layout.source_from_storage_key(&key) else {
+                continue;
+            };
+            if self.journal.rename_marker_exists(&destination)? {
+                continue;
+            }
+            if fs::remove_file(entry.path()).is_ok() {
+                removed = removed.saturating_add(1);
+            }
+        }
+        Ok(removed)
     }
 
     fn recover_rename(
@@ -509,7 +546,7 @@ impl Checkpointer {
                 if self.journal.rename_ready_exists(destination)? {
                     self.journal.clear_rename_ready(destination)?;
                 }
-                self.journal.remove_destination_backup(destination)?;
+                remove_if_exists(&self.layout.rename_backup_path(destination)?)?;
                 self.journal.clear_rename_marker(destination)?;
                 return Ok(Some("deleted_transaction"));
             }
@@ -526,7 +563,7 @@ impl Checkpointer {
             apply_owner_mode_best_effort(&file, &metadata);
         }
 
-        self.journal.remove_destination_backup(destination)?;
+        remove_if_exists(&self.layout.rename_backup_path(destination)?)?;
         if ready {
             Ok(Some("ready_pending"))
         } else {
@@ -828,12 +865,31 @@ fn create_write_nofollow(path: &Path, raw_mode: u32) -> io::Result<File> {
 }
 
 fn apply_owner_mode_best_effort(file: &File, metadata: &fs::Metadata) {
-    let _ = fchmod(file, Mode::from_raw_mode(metadata.mode() & 0o7777));
     let _ = fchown(
         file,
         Some(Uid::from_raw(metadata.uid())),
         Some(Gid::from_raw(metadata.gid())),
     );
+    let _ = fchmod(file, Mode::from_raw_mode(metadata.mode() & 0o7777));
+}
+
+fn copy_xattrs_best_effort(source: &File, destination: &File) {
+    let Ok(source_names) = source.list_xattr() else {
+        return;
+    };
+    let source_names = source_names.collect::<Vec<_>>();
+    if let Ok(destination_names) = destination.list_xattr() {
+        for name in destination_names {
+            if !source_names.iter().any(|source_name| source_name == &name) {
+                let _ = destination.remove_xattr(&name);
+            }
+        }
+    }
+    for name in source_names {
+        if let Ok(Some(value)) = source.get_xattr(&name) {
+            let _ = destination.set_xattr(&name, &value);
+        }
+    }
 }
 
 fn apply_metadata_best_effort(file: &File, metadata: &fs::Metadata) {

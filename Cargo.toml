@@ -10,6 +10,9 @@ publish = false
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
 ctrlc = { version = "3.5.2", features = ["termination"] }
+fuser = "0.18.0"
+libc = "0.2.190"
+parking_lot = "0.12.5"
 rayon = "1.12.0"
 rustix = { version = "1.1.5", features = ["fs", "process"] }
 socket2 = "0.6.5"
@@ -48,3 +51,7 @@ path = "src/bin/moraine_admit.rs"
 [[bin]]
 name = "moraine-range-cache-gc"
 path = "src/bin/moraine_range_cache_gc.rs"
+
+[[bin]]
+name = "morainefs"
+path = "src/bin/morainefs.rs"

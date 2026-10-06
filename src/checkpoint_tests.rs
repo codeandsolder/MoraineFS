@@ -95,6 +95,10 @@ impl Fixture {
             .unwrap()
     }
 
+    fn rename_backup_path(&self, source: &Path) -> PathBuf {
+        self.layout.rename_backup_path(source).unwrap()
+    }
+
     fn create_marker(&self, source: &Path) {
         Self::write(&self.journal_path(source, b".created"), b"created-v1\n");
     }
@@ -151,12 +155,9 @@ fn recovery_before_overlay_move_rolls_forward_then_finalizes() {
     f.cp.store
         .write_generation(&new, prepared.clean_gen)
         .unwrap();
-    Fixture::write(
-        &f.journal_path(&new, b".rename.dst-overlay"),
-        b"stale-destination",
-    );
+    Fixture::write(&f.rename_backup_path(&new), b"stale-destination");
     f.cp.finalize_rename(&new).unwrap();
-    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
+    assert!(!f.rename_backup_path(&new).exists());
     assert!(!f.cp.journal.rename_marker_exists(&new).unwrap());
     assert!(!f.cp.journal.rename_ready_exists(&new).unwrap());
     assert!(!f.cp.journal.create_marker_exists(&old).unwrap());
@@ -186,17 +187,14 @@ fn recovery_removes_dirty_destination_backup_before_source_move() {
     Fixture::write(&old, b"old-canonical");
     Fixture::write(&new, b"old-destination-canonical");
     f.writeback(&old, b"authoritative-overlay");
-    Fixture::write(
-        &f.journal_path(&new, b".rename.dst-overlay"),
-        b"old-destination-overlay",
-    );
+    Fixture::write(&f.rename_backup_path(&new), b"old-destination-overlay");
     f.rename_marker(&old, &new, false);
     assert_eq!(
         f.cp.recover_pending_renames(true).unwrap(),
         one("recovered_incomplete")
     );
     f.assert_common(&old, &new);
-    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
+    assert!(!f.rename_backup_path(&new).exists());
 }
 
 #[test]
@@ -207,17 +205,14 @@ fn recovery_removes_dirty_destination_backup_after_source_move() {
     Fixture::write(&old, b"old-canonical");
     Fixture::write(&new, b"old-destination-canonical");
     f.writeback(&new, b"authoritative-overlay");
-    Fixture::write(
-        &f.journal_path(&new, b".rename.dst-overlay"),
-        b"old-destination-overlay",
-    );
+    Fixture::write(&f.rename_backup_path(&new), b"old-destination-overlay");
     f.rename_marker(&old, &new, false);
     assert_eq!(
         f.cp.recover_pending_renames(true).unwrap(),
         one("recovered_incomplete")
     );
     f.assert_common(&old, &new);
-    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
+    assert!(!f.rename_backup_path(&new).exists());
 }
 
 #[test]
@@ -288,10 +283,7 @@ fn orphan_rename_auxiliaries_are_pruned() {
     let f = Fixture::new(Durability::File);
     let new = f.source("final");
     Fixture::write(&f.journal_path(&new, b".rename.ready"), b"ready-v1\n");
-    Fixture::write(
-        &f.journal_path(&new, b".rename.dst-overlay"),
-        b"orphan-destination",
-    );
+    Fixture::write(&f.rename_backup_path(&new), b"orphan-destination");
     assert_eq!(
         f.cp.recover_pending_renames(false).unwrap(),
         HashMap::from([
@@ -300,7 +292,7 @@ fn orphan_rename_auxiliaries_are_pruned() {
         ])
     );
     assert!(!f.cp.journal.rename_ready_exists(&new).unwrap());
-    assert!(!f.journal_path(&new, b".rename.dst-overlay").exists());
+    assert!(!f.rename_backup_path(&new).exists());
 }
 
 #[test]

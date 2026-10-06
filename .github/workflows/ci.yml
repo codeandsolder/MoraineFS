@@ -8,41 +8,17 @@ on:
 permissions:
   contents: read
 
-env:
-  LIBFUSE_VERSION: "3.18.3"
-  LIBFUSE_SHA256: "bcd19582c5e30f7fe45dd86a5540e998590aa01903afc7ebcbeea6c8ac5421ee"
-
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - name: Install native dependencies
-        run: >-
-          sudo apt-get update && sudo apt-get install -y --no-install-recommends
-          curl gcc meson ninja-build pkg-config shellcheck
+      - name: Install shell tooling
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
       - name: Install Rust toolchain
         run: >-
           rustup toolchain install 1.99.0 --profile minimal
           --component clippy --component rustfmt
-      - name: Build current libfuse
-        run: |
-          archive="$RUNNER_TEMP/fuse-${LIBFUSE_VERSION}.tar.gz"
-          source_dir="$RUNNER_TEMP/fuse-${LIBFUSE_VERSION}"
-          build_dir="$RUNNER_TEMP/libfuse-build"
-          prefix="$RUNNER_TEMP/libfuse"
-          curl --fail --location --silent --show-error \
-            --output "$archive" \
-            "https://github.com/libfuse/libfuse/releases/download/fuse-${LIBFUSE_VERSION}/fuse-${LIBFUSE_VERSION}.tar.gz"
-          echo "${LIBFUSE_SHA256}  ${archive}" | sha256sum --check --strict
-          tar -xzf "$archive" -C "$RUNNER_TEMP"
-          meson setup "$build_dir" "$source_dir" --prefix="$prefix" --libdir=lib \
-            -Dutils=false -Dexamples=false -Dtests=false -Duseroot=false \
-            -Ddisable-mtab=true -Denable-io-uring=false
-          meson compile -C "$build_dir"
-          meson install -C "$build_dir"
-          echo "PKG_CONFIG_PATH=$prefix/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$prefix/lib" >> "$GITHUB_ENV"
       - name: Toolchain versions
         run: |
           rustc --version

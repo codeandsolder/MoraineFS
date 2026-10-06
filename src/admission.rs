@@ -10,7 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use rayon::prelude::*;
 use rustix::fs::{
-    Advice, Gid, Mode, Timespec, Timestamps, Uid, fadvise, fchmod, fchown, futimens, major, minor,
+    Advice, Gid, Mode, OFlags, Timespec, Timestamps, Uid, fadvise, fchmod, fchown, futimens, major,
+    minor, open,
 };
 use walkdir::WalkDir;
 use xattr::FileExt as XattrFileExt;
@@ -94,8 +95,19 @@ impl AdmissionStats {
     }
 }
 
+pub enum MicroRead {
+    File(File),
+    Bytes(Arc<[u8]>),
+}
+
 pub trait MicroStore: Send + Sync {
     fn valid(&self, source: &Path, source_metadata: &fs::Metadata) -> io::Result<bool>;
+    fn open_valid(
+        &self,
+        source: &Path,
+        source_metadata: &fs::Metadata,
+    ) -> io::Result<Option<MicroRead>>;
+    fn invalidate(&self, source: &Path) -> io::Result<()>;
     fn store(
         &self,
         source: &Path,
@@ -164,6 +176,32 @@ impl MicroStore for DirectoryMicroStore {
             return Ok(false);
         };
         Ok(origin.as_deref() == Some(expected.as_slice()))
+    }
+
+    fn open_valid(
+        &self,
+        source: &Path,
+        source_metadata: &fs::Metadata,
+    ) -> io::Result<Option<MicroRead>> {
+        if !self.valid(source, source_metadata)? {
+            return Ok(None);
+        }
+        let file = open(
+            self.destination(source)?,
+            OFlags::RDONLY | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+            Mode::empty(),
+        )
+        .map(File::from)
+        .map_err(io::Error::from)?;
+        Ok(Some(MicroRead::File(file)))
+    }
+
+    fn invalidate(&self, source: &Path) -> io::Result<()> {
+        match fs::remove_file(self.destination(source)?) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(error) => Err(error),
+        }
     }
 
     fn store(

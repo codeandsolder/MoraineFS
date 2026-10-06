@@ -13,19 +13,19 @@ use crate::store::{remove_if_exists, sync_directory};
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JournalCleanup {
     pub orphan_ready_pruned: u64,
-    pub orphan_backup_pruned: u64,
 }
 
 pub trait NamespaceJournal: Send + Sync {
     fn create_marker_exists(&self, source: &Path) -> io::Result<bool>;
+    fn mark_created(&self, source: &Path) -> io::Result<()>;
     fn clear_create_marker(&self, source: &Path) -> io::Result<()>;
     fn rename_marker_exists(&self, source: &Path) -> io::Result<bool>;
+    fn begin_rename(&self, source: &Path, destination: &Path) -> io::Result<()>;
     fn rename_ready_exists(&self, source: &Path) -> io::Result<bool>;
     fn read_rename_source(&self, destination: &Path) -> io::Result<Option<PathBuf>>;
     fn mark_rename_ready(&self, destination: &Path) -> io::Result<()>;
     fn clear_rename_ready(&self, destination: &Path) -> io::Result<()>;
     fn clear_rename_marker(&self, destination: &Path) -> io::Result<()>;
-    fn remove_destination_backup(&self, destination: &Path) -> io::Result<()>;
     fn pending_renames(&self) -> io::Result<Vec<PathBuf>>;
     fn prune_orphans(&self) -> io::Result<JournalCleanup>;
 }
@@ -135,12 +135,23 @@ impl NamespaceJournal for FileNamespaceJournal {
         ))
     }
 
+    fn mark_created(&self, source: &Path) -> io::Result<()> {
+        write_marker(&self.marker_path(source, b".created")?, b"created-v1\n")
+    }
+
     fn clear_create_marker(&self, source: &Path) -> io::Result<()> {
         remove_and_sync_parent(&self.marker_path(source, b".created")?)
     }
 
     fn rename_marker_exists(&self, source: &Path) -> io::Result<bool> {
         Ok(Self::marker_is_file(&self.marker_path(source, b".rename")?))
+    }
+
+    fn begin_rename(&self, source: &Path, destination: &Path) -> io::Result<()> {
+        let ready = self.marker_path(destination, b".rename.ready")?;
+        remove_if_exists(&ready)?;
+        let marker = self.marker_path(destination, b".rename")?;
+        write_marker(&marker, source.as_os_str().as_bytes())
     }
 
     fn rename_ready_exists(&self, source: &Path) -> io::Result<bool> {
@@ -182,10 +193,6 @@ impl NamespaceJournal for FileNamespaceJournal {
         remove_and_sync_parent(&self.marker_path(destination, b".rename")?)
     }
 
-    fn remove_destination_backup(&self, destination: &Path) -> io::Result<()> {
-        remove_and_sync_parent(&self.marker_path(destination, b".rename.dst-overlay")?)
-    }
-
     fn pending_renames(&self) -> io::Result<Vec<PathBuf>> {
         let mut destinations = self
             .collect_suffix_files(b".rename")?
@@ -199,9 +206,24 @@ impl NamespaceJournal for FileNamespaceJournal {
     fn prune_orphans(&self) -> io::Result<JournalCleanup> {
         Ok(JournalCleanup {
             orphan_ready_pruned: self.prune_suffix(b".rename.ready", b".rename")?,
-            orphan_backup_pruned: self.prune_suffix(b".rename.dst-overlay", b".rename")?,
         })
     }
+}
+
+fn write_marker(path: &Path, payload: &[u8]) -> io::Result<()> {
+    let parent = parent(path)?;
+    fs::create_dir_all(parent)?;
+    let mut file = open(
+        path,
+        OFlags::WRONLY | OFlags::CREATE | OFlags::TRUNC | OFlags::CLOEXEC | OFlags::NOFOLLOW,
+        Mode::from_raw_mode(0o600),
+    )
+    .map(File::from)
+    .map_err(io::Error::from)?;
+    file.write_all(payload)?;
+    file.sync_all()?;
+    drop(file);
+    sync_directory(parent)
 }
 
 fn remove_and_sync_parent(path: &Path) -> io::Result<()> {

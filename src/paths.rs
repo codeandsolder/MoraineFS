@@ -76,6 +76,14 @@ impl Layout {
     pub fn overlay_path(&self, source: &Path) -> io::Result<PathBuf> {
         self.adapter_path(&self.overlay_root, source, b"")
     }
+
+    pub(crate) fn transaction_root(&self) -> PathBuf {
+        self.overlay_root.join(".morainefs-transactions")
+    }
+
+    pub(crate) fn rename_backup_path(&self, source: &Path) -> io::Result<PathBuf> {
+        self.adapter_path(&self.transaction_root(), source, b".rename-backup")
+    }
 }
 
 #[cfg(test)]
