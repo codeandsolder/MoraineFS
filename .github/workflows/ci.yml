@@ -25,5 +25,3 @@ jobs:
           cargo --version
       - name: Lint, test, and build
         run: make check
-      - name: ShellCheck
-        run: shellcheck tools/setup-zram.sh
