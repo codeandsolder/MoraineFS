@@ -64,7 +64,7 @@ enum PrepareStatus {
 
 impl PrepareStatus {
     #[must_use]
-    fn label(&self) -> String {
+    fn label(self) -> String {
         match self {
             Self::Prepared => "prepared".to_owned(),
             Self::RenameInProgress => "rename_in_progress".to_owned(),
