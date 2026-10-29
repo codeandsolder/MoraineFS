@@ -1,6 +1,7 @@
 use std::fs;
 use std::io;
 use std::path::{Component, Path, PathBuf};
+use std::str::FromStr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Tier {
@@ -8,8 +9,10 @@ pub enum Tier {
     Volatile,
 }
 
-impl Tier {
-    fn parse(value: &str) -> io::Result<Self> {
+impl FromStr for Tier {
+    type Err = io::Error;
+
+    fn from_str(value: &str) -> io::Result<Self> {
         match value {
             "durable" => Ok(Self::Durable),
             "volatile" | "async" => Ok(Self::Volatile),
@@ -47,10 +50,14 @@ impl Policy {
         let Some(path) = path else {
             return Ok(Self::default());
         };
-        Self::parse(&fs::read_to_string(path)?)
+        fs::read_to_string(path)?.parse()
     }
+}
 
-    pub fn parse(input: &str) -> io::Result<Self> {
+impl FromStr for Policy {
+    type Err = io::Error;
+
+    fn from_str(input: &str) -> io::Result<Self> {
         let mut policy = Self::default();
         for (index, raw_line) in input.lines().enumerate() {
             let line = raw_line
@@ -68,10 +75,10 @@ impl Policy {
                 ));
             }
             if fields[0] == "default" {
-                policy.default = Tier::parse(fields[1])?;
+                policy.default = fields[1].parse()?;
                 continue;
             }
-            let tier = Tier::parse(fields[0])?;
+            let tier = fields[0].parse()?;
             let prefix = PathBuf::from(fields[1]);
             validate_prefix(&prefix).map_err(|error| {
                 io::Error::new(error.kind(), format!("policy line {}: {error}", index + 1))
@@ -80,7 +87,9 @@ impl Policy {
         }
         Ok(policy)
     }
+}
 
+impl Policy {
     #[must_use]
     pub fn tier_for(&self, path: &Path) -> Tier {
         self.rules
@@ -115,9 +124,10 @@ mod tests {
 
     #[test]
     fn longest_prefix_wins_on_component_boundaries() {
-        let policy =
-            Policy::parse("default durable\nvolatile /srv/scratch\ndurable /srv/scratch/keep\n")
-                .unwrap();
+        let policy = str::parse::<Policy>(
+            "default durable\nvolatile /srv/scratch\ndurable /srv/scratch/keep\n",
+        )
+        .unwrap();
         assert_eq!(policy.tier_for(Path::new("/srv/scratch/a")), Tier::Volatile);
         assert_eq!(
             policy.tier_for(Path::new("/srv/scratch/keep/a")),
@@ -128,7 +138,7 @@ mod tests {
 
     #[test]
     fn async_is_a_volatile_alias() {
-        let policy = Policy::parse("async /tmp/cache\n").unwrap();
+        let policy = str::parse::<Policy>("async /tmp/cache\n").unwrap();
         assert_eq!(policy.tier_for(Path::new("/tmp/cache/a")), Tier::Volatile);
     }
 }
