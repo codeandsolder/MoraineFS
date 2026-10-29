@@ -29,7 +29,7 @@ pub enum Durability {
     File,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct CheckpointConfig {
     pub batch_max_files: usize,
     pub batch_delay: Duration,
@@ -48,7 +48,7 @@ struct Prepared {
     pub sync_dirs: BTreeSet<PathBuf>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PrepareStatus {
     Prepared,
     RenameInProgress,
@@ -64,7 +64,7 @@ enum PrepareStatus {
 
 impl PrepareStatus {
     #[must_use]
-    fn label(&self) -> String {
+    fn label(self) -> String {
         match self {
             Self::Prepared => "prepared".to_owned(),
             Self::RenameInProgress => "rename_in_progress".to_owned(),

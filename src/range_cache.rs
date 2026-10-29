@@ -40,7 +40,7 @@ impl Fingerprint {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 struct CacheEntry {
     size: u64,
     last_use: u64,

@@ -69,7 +69,7 @@ impl OriginFingerprint {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct AdmissionPolicy {
     pub max_size: u64,
     pub parent_budget: u64,
