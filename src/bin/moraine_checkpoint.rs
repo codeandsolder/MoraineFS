@@ -4,7 +4,7 @@ use std::io;
 use std::os::unix::ffi::OsStringExt;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::UnixDatagram;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
@@ -130,7 +130,7 @@ fn build_checkpointer(args: &Args) -> io::Result<Arc<Checkpointer>> {
     )?))
 }
 
-fn bind_socket(path: &PathBuf) -> io::Result<UnixDatagram> {
+fn bind_socket(path: &Path) -> io::Result<UnixDatagram> {
     let parent = path.parent().ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
