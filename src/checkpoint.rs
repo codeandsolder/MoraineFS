@@ -322,16 +322,26 @@ impl Checkpointer {
             }
             let mut written = 0_usize;
             while written < read {
-                let delta = canonical_file.write_at(
-                    &buffer[written..read],
-                    offset + u64::try_from(written).unwrap_or(0),
-                )?;
+                let delta =
+                    canonical_file.write_at(
+                        &buffer[written..read],
+                        offset
+                            .checked_add(u64::try_from(written).map_err(|_| {
+                                io::Error::other("copy write offset conversion failed")
+                            })?)
+                            .ok_or_else(|| io::Error::other("copy write offset overflow"))?,
+                    )?;
                 if delta == 0 {
                     return Err(PrepareError::Status(PrepareStatus::ShortWrite));
                 }
                 written += delta;
             }
-            offset = offset.saturating_add(u64::try_from(read).unwrap_or(0));
+            offset = offset
+                .checked_add(
+                    u64::try_from(read)
+                        .map_err(|_| io::Error::other("copy read offset conversion failed"))?,
+                )
+                .ok_or_else(|| io::Error::other("copy read offset overflow"))?;
         }
         canonical_file.set_len(before_gen.size)?;
         copy_xattrs_best_effort(&overlay_file, &canonical_file);
