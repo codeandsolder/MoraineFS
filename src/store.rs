@@ -20,6 +20,11 @@ pub struct Generation {
 }
 
 impl Generation {
+    /// Build a generation fingerprint from filesystem metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a timestamp cannot be represented as signed nanoseconds.
     pub fn from_metadata(metadata: &fs::Metadata) -> io::Result<Self> {
         Ok(Self {
             size: metadata.len(),
@@ -37,9 +42,32 @@ fn nanoseconds(seconds: i64, nanos: i64) -> io::Result<i64> {
 }
 
 pub trait MetadataStore: Send + Sync {
+    /// Read the persisted generation for `source`, if one exists and is valid.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source path cannot be mapped or state storage cannot be read.
     fn read_generation(&self, source: &Path) -> io::Result<Option<Generation>>;
+
+    /// Atomically persist the generation for `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if path mapping, state-file I/O, or durability synchronization fails.
     fn write_generation(&self, source: &Path, generation: Generation) -> io::Result<()>;
+
+    /// Remove persisted generation state for `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if path mapping or state removal fails.
     fn remove_generation(&self, source: &Path) -> io::Result<()>;
+
+    /// Enumerate logical source paths with persisted generation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if state storage cannot be enumerated or decoded.
     fn sources(&self) -> io::Result<Vec<PathBuf>>;
 }
 

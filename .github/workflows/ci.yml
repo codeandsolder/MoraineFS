@@ -5,23 +5,17 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   check:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - name: Install shell tooling
-        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends shellcheck
-      - name: Install Rust toolchain
-        run: >-
-          rustup toolchain install 1.99.0 --profile minimal
-          --component clippy --component rustfmt
-      - name: Toolchain versions
-        run: |
-          rustc --version
-          cargo --version
-      - name: Lint, test, and build
-        run: make check
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@9be344b41c4c7e53f451d7ab1f66d7d9e7a9a6f4 # main
+    with:
+      command: make check
+      rust-toolchain: "1.99.0"
+      rust-components: clippy rustfmt

@@ -145,6 +145,12 @@ pub struct MoraineFs {
 }
 
 impl MoraineFs {
+    /// Construct the foreground filesystem and validate its tier layouts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source root is invalid, tier layouts disagree with it, or required
+    /// overlay state cannot be created or inspected.
     pub fn new(mut config: ForegroundConfig) -> io::Result<Self> {
         let source = SourceRoot::new(config.source_root.clone())?;
         config.source_root.clone_from(&source.path);

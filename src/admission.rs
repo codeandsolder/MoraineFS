@@ -101,19 +101,48 @@ pub enum MicroRead {
 }
 
 pub trait MicroStore: Send + Sync {
+    /// Check whether the cached object still matches the source metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source path is invalid or cache metadata cannot be inspected.
     fn valid(&self, source: &Path, source_metadata: &fs::Metadata) -> io::Result<bool>;
+
+    /// Open a cached object when it still matches the source metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source path is invalid or the cache cannot be inspected or opened.
     fn open_valid(
         &self,
         source: &Path,
         source_metadata: &fs::Metadata,
     ) -> io::Result<Option<MicroRead>>;
+
+    /// Remove any cached object for `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the source path is invalid or cache removal fails.
     fn invalidate(&self, source: &Path) -> io::Result<()>;
+
+    /// Persist a cache copy of `source_file` associated with the supplied metadata.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when path validation, copying, metadata updates, or persistence fails.
     fn store(
         &self,
         source: &Path,
         source_file: &File,
         source_metadata: &fs::Metadata,
     ) -> io::Result<()>;
+
+    /// Evict cached objects until memory usage is below the configured low watermark.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when cache enumeration, accounting, or removal fails.
     fn evict_if_needed(
         &self,
         protect: Option<&Path>,
@@ -129,6 +158,11 @@ pub struct DirectoryMicroStore {
 }
 
 impl DirectoryMicroStore {
+    /// Create a directory-backed micro-object store.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the cache root cannot be created or inspected.
     pub fn new(root: PathBuf) -> io::Result<Self> {
         fs::create_dir_all(&root)?;
         let device = fs::metadata(&root)?.dev();
@@ -387,6 +421,11 @@ pub struct AdmissionWorker {
 }
 
 impl AdmissionWorker {
+    /// Create an admission worker with a dedicated Rayon pool.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the worker thread pool cannot be created.
     pub fn new(
         store: Arc<dyn MicroStore>,
         policy: AdmissionPolicy,
@@ -457,6 +496,11 @@ impl AdmissionWorker {
         stats
     }
 
+    /// Apply the configured cache watermarks, optionally protecting one path from eviction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error propagated by the configured micro-object store.
     pub fn evict_if_needed(&self, protect: Option<&Path>) -> io::Result<AdmissionStats> {
         self.store.evict_if_needed(
             protect,
@@ -491,7 +535,6 @@ impl AdmissionWorker {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::fs;
     use std::os::unix::fs::{MetadataExt, symlink};

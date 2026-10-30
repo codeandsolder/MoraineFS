@@ -16,17 +16,88 @@ pub struct JournalCleanup {
 }
 
 pub trait NamespaceJournal: Send + Sync {
+    /// Check whether a create-intent marker exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source path cannot be mapped into journal storage.
     fn create_marker_exists(&self, source: &Path) -> io::Result<bool>;
+
+    /// Persist create intent for `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if path mapping, marker creation, writing, or synchronization fails.
     fn mark_created(&self, source: &Path) -> io::Result<()>;
+
+    /// Clear create intent for `source`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if path mapping, marker removal, or parent-directory synchronization fails.
     fn clear_create_marker(&self, source: &Path) -> io::Result<()>;
+
+    /// Check whether a rename transaction marker exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source path cannot be mapped into journal storage.
     fn rename_marker_exists(&self, source: &Path) -> io::Result<bool>;
+
+    /// Begin a durable rename transaction from `source` to `destination`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if journal paths are invalid or marker persistence fails.
     fn begin_rename(&self, source: &Path, destination: &Path) -> io::Result<()>;
+
+    /// Check whether a rename transaction reached its ready state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source path cannot be mapped into journal storage.
     fn rename_ready_exists(&self, source: &Path) -> io::Result<bool>;
+
+    /// Read and validate the recorded source of a rename transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the destination cannot be mapped into journal storage.
     fn read_rename_source(&self, destination: &Path) -> io::Result<Option<PathBuf>>;
+
+    /// Persist the ready marker for a rename transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if marker creation, writing, or durability synchronization fails.
     fn mark_rename_ready(&self, destination: &Path) -> io::Result<()>;
+
+    /// Clear the ready marker for a rename transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if marker removal or parent-directory synchronization fails.
     fn clear_rename_ready(&self, destination: &Path) -> io::Result<()>;
+
+    /// Clear the primary rename transaction marker.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if marker removal or parent-directory synchronization fails.
     fn clear_rename_marker(&self, destination: &Path) -> io::Result<()>;
+
+    /// Enumerate destinations with pending rename transactions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if journal enumeration or path decoding fails.
     fn pending_renames(&self) -> io::Result<Vec<PathBuf>>;
+
+    /// Remove orphaned journal artifacts and return cleanup statistics.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if journal enumeration, removal, or synchronization fails.
     fn prune_orphans(&self) -> io::Result<JournalCleanup>;
 }
 

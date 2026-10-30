@@ -45,6 +45,11 @@ impl Default for Policy {
 }
 
 impl Policy {
+    /// Load a policy file, or return the default policy when no path is supplied.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be read or its policy syntax is invalid.
     pub fn load(path: Option<&Path>) -> io::Result<Self> {
         let Some(path) = path else {
             return Ok(Self::default());
@@ -115,7 +120,6 @@ fn validate_prefix(path: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::panic)]
 
     use std::path::Path;
 

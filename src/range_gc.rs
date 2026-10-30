@@ -11,6 +11,11 @@ pub struct RangeGcStats {
     pub active_dirs: u64,
 }
 
+/// Remove stale per-process range-cache directories and collect cleanup statistics.
+///
+/// # Errors
+///
+/// Returns an error if the cache root cannot be created or enumerated.
 pub fn collect_stale_process_dirs(root: &Path) -> io::Result<RangeGcStats> {
     fs::create_dir_all(root)?;
     let mut stats = RangeGcStats::default();
@@ -57,7 +62,6 @@ pub fn collect_stale_process_dirs(root: &Path) -> io::Result<RangeGcStats> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::fs;
     use std::os::unix::fs::symlink;

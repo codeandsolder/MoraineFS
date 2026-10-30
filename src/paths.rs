@@ -73,6 +73,11 @@ impl Layout {
             .join(OsString::from(OsStr::from_bytes(&bytes))))
     }
 
+    /// Map a validated logical source path into the overlay tree.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `source` is outside the configured source root or is not normalized.
     pub fn overlay_path(&self, source: &Path) -> io::Result<PathBuf> {
         self.adapter_path(&self.overlay_root, source, b"")
     }
@@ -88,7 +93,6 @@ impl Layout {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::path::{Path, PathBuf};
 
