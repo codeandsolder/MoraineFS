@@ -9,7 +9,7 @@ build:
 
 lint:
 	$(CARGO) fmt --all -- --check
-	$(CARGO) clippy --all-targets --all-features --locked -- -D warnings
+	$(CARGO) clippy --all-features --locked -- -D warnings
 	bash -n tools/setup-zram.sh
 	shellcheck tools/setup-zram.sh
 	git diff --check

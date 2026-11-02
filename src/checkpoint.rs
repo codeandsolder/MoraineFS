@@ -108,6 +108,12 @@ pub struct Checkpointer {
 }
 
 impl Checkpointer {
+    /// Create a checkpointer for one source/overlay layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for invalid batching configuration or if the source root cannot be opened
+    /// for durability synchronization.
     pub fn new(
         layout: Layout,
         store: Arc<dyn MetadataStore>,
@@ -145,6 +151,12 @@ impl Checkpointer {
         let _ = self.sender.send(Work::Stop);
     }
 
+    /// Queue a source path for convergence, returning whether it was newly queued.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the source path is invalid, scheduler state is poisoned, or the work
+    /// queue is disconnected.
     pub fn enqueue(&self, source: &Path, changed_event: bool) -> io::Result<bool> {
         self.layout.storage_key(source)?;
         let now = Instant::now();
@@ -451,6 +463,11 @@ impl Checkpointer {
         self.journal.clear_rename_marker(source)
     }
 
+    /// Recover pending namespace rename transactions and summarize their outcomes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if journal, overlay, canonical filesystem, or durability operations fail.
     pub fn recover_pending_renames(
         &self,
         include_incomplete: bool,
@@ -582,6 +599,11 @@ impl Checkpointer {
         }
     }
 
+    /// Scan existing overlays, enqueue dirty objects, and prune stale generation state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if generation metadata, journal state, scheduling, or path validation fails.
     pub fn scan_existing(&self) -> io::Result<(u64, u64, u64)> {
         let mut seen = 0_u64;
         let mut dirty = 0_u64;
@@ -631,6 +653,11 @@ impl Checkpointer {
         Ok((seen, dirty, self.prune_states()?))
     }
 
+    /// Remove generation records that no longer have an overlay object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if state enumeration, path validation, or state removal fails.
     pub fn prune_states(&self) -> io::Result<u64> {
         let mut removed = 0_u64;
         for source in self.store.sources()? {
@@ -643,6 +670,11 @@ impl Checkpointer {
         Ok(removed)
     }
 
+    /// Run the checkpoint worker loop until stopped or its work queue disconnects.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when scheduling, checkpoint processing, or persistence fails.
     pub fn run_worker(&self) -> io::Result<()> {
         while !self.stopping.load(Ordering::Acquire) {
             self.promote_due_deferred()?;
@@ -750,22 +782,17 @@ impl Checkpointer {
             self.finish_source(&item.source, retry, Some(item.start_seq))?;
         }
 
+        let files = batch.len();
+        let prepared = status_counts.get("prepared").copied().unwrap_or(0);
+        let copy_ms = copy_time.as_secs_f64() * 1000.0;
+        let durability = match self.config.durability {
+            Durability::SyncFs => "syncfs",
+            Durability::File => "file",
+        };
+        let sync_ms = sync_time.as_secs_f64() * 1000.0;
+        let sync_ok = u8::from(sync_ok);
         println!(
-            "batch files={} prepared={} clean={} retry={} state_errors={} copy_bytes={} copy_ms={:.1} durability={} sync_ms={:.1} sync_ok={} sync_error={} status={status_counts:?}",
-            batch.len(),
-            status_counts.get("prepared").copied().unwrap_or(0),
-            clean,
-            retry_count,
-            state_errors,
-            copied,
-            copy_time.as_secs_f64() * 1000.0,
-            match self.config.durability {
-                Durability::SyncFs => "syncfs",
-                Durability::File => "file",
-            },
-            sync_time.as_secs_f64() * 1000.0,
-            u8::from(sync_ok),
-            sync_error,
+            "batch files={files} prepared={prepared} clean={clean} retry={retry_count} state_errors={state_errors} copy_bytes={copied} copy_ms={copy_ms:.1} durability={durability} sync_ms={sync_ms:.1} sync_ok={sync_ok} sync_error={sync_error} status={status_counts:?}",
         );
         Ok(())
     }

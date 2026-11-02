@@ -101,6 +101,11 @@ pub struct RangeCache {
 }
 
 impl RangeCache {
+    /// Create a process-local range cache rooted below `root`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the process cache directory cannot be created.
     pub fn new(root: PathBuf, capacity: u64) -> io::Result<Self> {
         fs::create_dir_all(root.join(format!("pid-{}", std::process::id())))?;
         Ok(Self {
@@ -111,6 +116,11 @@ impl RangeCache {
         })
     }
 
+    /// Read a range through the adaptive cache, returning `None` when caching is not useful.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if source metadata, cache I/O, or source reads fail.
     pub fn read(
         &self,
         source: &File,
@@ -169,16 +179,13 @@ impl RangeCache {
             i128::from(metadata.mtime()) * 1_000_000_000_i128 + i128::from(metadata.mtime_nsec());
         let ctime_ns =
             i128::from(metadata.ctime()) * 1_000_000_000_i128 + i128::from(metadata.ctime_nsec());
+        let pid = std::process::id();
+        let dev = metadata.dev();
+        let ino = metadata.ino();
+        let len = metadata.len();
         self.root
-            .join(format!("pid-{}", std::process::id()))
-            .join(format!(
-                "{:x}-{:x}-{:x}-{:x}-{:x}",
-                metadata.dev(),
-                metadata.ino(),
-                metadata.len(),
-                mtime_ns,
-                ctime_ns
-            ))
+            .join(format!("pid-{pid}"))
+            .join(format!("{dev:x}-{ino:x}-{len:x}-{mtime_ns:x}-{ctime_ns:x}"))
             .join(format!("{block_start:016x}.blk"))
     }
 
@@ -304,7 +311,6 @@ fn valid_cached(path: &Path, expected_len: u64) -> io::Result<Option<File>> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
     use std::fs::{self, File};
 

@@ -6,6 +6,10 @@ rust-version = "1.99"
 license = "GPL-2.0-only"
 publish = false
 
+[package.metadata.rust-skills2]
+allow-test-panics = true
+allow-test-panics-reason = "Tests use panic-style assertions and unwraps; production targets remain strict"
+
 [dependencies]
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
@@ -36,9 +40,6 @@ expect_used = "deny"
 panic = "deny"
 todo = "deny"
 unimplemented = "deny"
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-module_name_repetitions = "allow"
 
 [[bin]]
 name = "moraine-checkpoint"
