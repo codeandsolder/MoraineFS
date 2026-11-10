@@ -1,44 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": ["config:recommended", "github>codeandsolder/ci-workflows:renovate-ci-trust-root"],
-  "dependencyDashboard": true,
-  "minimumReleaseAge": "3 days",
-  "minimumReleaseAgeBehaviour": "timestamp-required",
-  "internalChecksFilter": "strict",
-  "separateMultipleMajor": true,
-  "prConcurrentLimit": 0,
-  "prHourlyLimit": 0,
-  "rebaseWhen": "behind-base-branch",
-  "packageRules": [
-    {
-      "description": "Automerge ordinary compatible updates after CI",
-      "matchUpdateTypes": ["minor", "patch", "pin", "pinDigest", "digest"],
-      "matchCurrentVersion": "!/^0/",
-      "automerge": true,
-      "automergeType": "pr"
-    },
-    {
-      "description": "Potentially breaking pre-1.0 updates stay open for the maintenance agent",
-      "matchCurrentVersion": "/^0\\./",
-      "automerge": false
-    },
-    {
-      "description": "Major updates are always attempted but stay open for the maintenance agent",
-      "matchUpdateTypes": ["major"],
-      "automerge": false
-    },
-    {
-      "description": "Package replacements stay open for the maintenance agent",
-      "matchUpdateTypes": ["replacement"],
-      "minimumReleaseAge": null,
-      "automerge": false
-    },
-    {
-      "description": "Shared CI trust roots remain review-only and bypass only the release-age hold",
-      "matchManagers": ["github-actions"],
-      "matchPackageNames": ["/^codeandsolder\\/(?:ci-workflows|rust-skills2)(?:\\/|$)/"],
-      "minimumReleaseAge": null,
-      "automerge": false
-    }
-  ]
+  "extends": [
+    "github>codeandsolder/ci-workflows:renovate-fleet"
+  ],
+  "separateMultipleMajor": true
 }
