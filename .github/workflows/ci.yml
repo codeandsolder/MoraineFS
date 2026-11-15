@@ -14,7 +14,7 @@ permissions:
 
 jobs:
   check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@bfade5fa936ccc3c68e562ae049602c85aa2f9ee # main
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@6db1c8a6d96604a1f2b62a994e8ee5bc38deb239 # main
     with:
       command: make check
       rust-toolchain: "1.99.0"
