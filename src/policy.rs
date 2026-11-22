@@ -94,7 +94,7 @@ impl std::str::FromStr for Policy {
 }
 
 impl Policy {
-    #[must_use]
+    #[must_use = "the result determines the storage tier for this path"]
     pub fn tier_for(&self, path: &Path) -> Tier {
         self.rules
             .iter()

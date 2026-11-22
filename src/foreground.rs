@@ -53,7 +53,7 @@ pub struct ForegroundConfig {
 }
 
 impl ForegroundConfig {
-    #[must_use]
+    #[must_use = "the returned configuration contains the effective writeback limit"]
     pub const fn with_default_copy_limit(mut self) -> Self {
         if self.writeback_copy_max == 0 {
             self.writeback_copy_max = DEFAULT_WRITEBACK_COPY_MAX;

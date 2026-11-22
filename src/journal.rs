@@ -108,7 +108,7 @@ pub struct FileNamespaceJournal {
 }
 
 impl FileNamespaceJournal {
-    #[must_use]
+    #[must_use = "the returned journal is needed to access the persistent journal"]
     pub const fn new(layout: Layout, root: PathBuf) -> Self {
         Self { layout, root }
     }
