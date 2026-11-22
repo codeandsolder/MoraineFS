@@ -14,8 +14,7 @@ permissions:
 
 jobs:
   check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@d168449633a47de6c0166f0c0cff903e96983820 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@2697eb286ccd2a832509f8c045615b819b932fc5 # main
     with:
       command: make check
-      rust-toolchain: "1.99.0"
       rust-components: clippy rustfmt
