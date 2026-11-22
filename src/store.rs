@@ -78,7 +78,7 @@ pub struct FileMetadataStore {
 }
 
 impl FileMetadataStore {
-    #[must_use]
+    #[must_use = "the returned store is needed to access persistent metadata"]
     pub const fn new(layout: Layout, root: PathBuf) -> Self {
         Self { layout, root }
     }

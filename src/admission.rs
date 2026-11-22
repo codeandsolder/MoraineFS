@@ -34,7 +34,7 @@ struct OriginFingerprint {
 }
 
 impl OriginFingerprint {
-    #[must_use]
+    #[must_use = "the returned fingerprint identifies the origin file version"]
     fn from_metadata(metadata: &fs::Metadata) -> Self {
         Self {
             dev: metadata.dev(),
@@ -47,7 +47,7 @@ impl OriginFingerprint {
         }
     }
 
-    #[must_use]
+    #[must_use = "the returned bytes are the encoded origin fingerprint"]
     fn encode(self) -> [u8; 56] {
         let mut out = [0_u8; 56];
         let fields = [self.dev, self.ino, self.size];

@@ -63,7 +63,7 @@ enum PrepareStatus {
 }
 
 impl PrepareStatus {
-    #[must_use]
+    #[must_use = "the returned label describes the preparation status"]
     fn label(self) -> String {
         match self {
             Self::Prepared => "prepared".to_owned(),
@@ -141,7 +141,7 @@ impl Checkpointer {
         })
     }
 
-    #[must_use]
+    #[must_use = "the returned reference identifies the checkpoint storage layout"]
     pub const fn layout(&self) -> &Layout {
         &self.layout
     }
