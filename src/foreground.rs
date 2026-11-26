@@ -2051,3 +2051,64 @@ impl Filesystem for MoraineFs {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ForegroundConfig, MoraineFs, TierState};
+    use crate::{DirectoryMicroStore, FileMetadataStore, FileNamespaceJournal, Layout, Policy};
+    use fuser::Owner;
+    use std::fs;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::sync::Arc;
+
+    #[test]
+    fn creation_uses_kernel_owner_and_inherits_setgid_parent_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let layout = Layout {
+            source_root: source.clone(),
+            overlay_root: temp.path().join("overlay"),
+        };
+        let tier = TierState {
+            metadata: Arc::new(FileMetadataStore::new(
+                layout.clone(),
+                temp.path().join("generations"),
+            )),
+            journal: Arc::new(FileNamespaceJournal::new(
+                layout.clone(),
+                temp.path().join("journal"),
+            )),
+            layout,
+            checkpoint_socket: temp.path().join("checkpoint.sock"),
+        };
+        let filesystem = MoraineFs::new(ForegroundConfig {
+            source_root: source.clone(),
+            policy: Policy::default(),
+            durable: tier.clone(),
+            volatile: tier,
+            micro: Arc::new(DirectoryMicroStore::new(temp.path().join("micro")).unwrap()),
+            range_cache: None,
+            admission_socket: temp.path().join("admission.sock"),
+            defer_file_namespace: false,
+            relaxed_create_durability: false,
+            writeback_copy_max: 0,
+        })
+        .unwrap();
+        let parent_gid = fs::metadata(&source).unwrap().gid();
+        let owner = Owner {
+            uid: 12345,
+            gid: parent_gid ^ 1,
+        };
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            filesystem.creation_identity(&source, owner).unwrap(),
+            (owner.uid, owner.gid, false)
+        );
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o2755)).unwrap();
+        assert_eq!(
+            filesystem.creation_identity(&source, owner).unwrap(),
+            (owner.uid, parent_gid, true)
+        );
+    }
+}
