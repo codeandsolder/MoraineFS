@@ -14,7 +14,7 @@ allow-test-panics-reason = "Tests use panic-style assertions and unwraps; produc
 clap = { version = "4.6.7", features = ["derive"] }
 crossbeam-channel = "0.5.17"
 ctrlc = { version = "3.5.2", features = ["termination"] }
-fuser = "0.18.0"
+fuser = "0.19.0"
 libc = "0.2.190"
 parking_lot = "0.13.0"
 rayon = "1.12.0"

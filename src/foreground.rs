@@ -12,9 +12,9 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use fuser::{
     AccessFlags, BackingId, BsdFileFlags, CopyFileRangeFlags, Errno, FileAttr, FileHandle,
     FileType, Filesystem, FopenFlags, Generation as FuseGeneration, INodeNo, InitFlags,
-    KernelConfig, LockOwner, OpenAccMode, OpenFlags, RenameFlags as FuseRenameFlags, ReplyAttr,
-    ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry, ReplyOpen,
-    ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow, WriteFlags,
+    KernelConfig, LockOwner, OpenAccMode, OpenFlags, Owner, RenameFlags as FuseRenameFlags,
+    ReplyAttr, ReplyCreate, ReplyData, ReplyDirectory, ReplyDirectoryPlus, ReplyEmpty, ReplyEntry,
+    ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow, WriteFlags,
 };
 use parking_lot::Mutex;
 use rustix::fs::{self as rfs, AtFlags, Mode, OFlags, fchmod, fchown, futimens};
@@ -589,15 +589,15 @@ impl MoraineFs {
         Ok(metadata_attr(&metadata, ino))
     }
 
-    fn creation_identity(&self, parent: &Path, req: &Request) -> io::Result<(u32, u32, bool)> {
+    fn creation_identity(&self, parent: &Path, owner: Owner) -> io::Result<(u32, u32, bool)> {
         let metadata = self.source.metadata(parent)?;
         let inherit_setgid = metadata.mode() & libc::S_ISGID != 0;
         let gid = if inherit_setgid {
             metadata.gid()
         } else {
-            req.gid()
+            owner.gid
         };
-        Ok((req.uid(), gid, inherit_setgid))
+        Ok((owner.uid, gid, inherit_setgid))
     }
 
     fn dirty_rename(&self, request: RenameRequest<'_>) -> io::Result<()> {
@@ -847,6 +847,8 @@ fn send_datagram(socket_path: &Path, payload: &[u8]) {
 
 impl Filesystem for MoraineFs {
     fn init(&mut self, _req: &Request, config: &mut KernelConfig) -> io::Result<()> {
+        // Keep privilege-bit and security.capability clearing in the kernel;
+        // FUSE_HANDLE_KILLPRIV_V2 is not negotiated.
         config
             .add_capabilities(InitFlags::FUSE_PASSTHROUGH | InitFlags::FUSE_PARALLEL_DIROPS)
             .map_err(|unsupported| {
@@ -920,6 +922,7 @@ impl Filesystem for MoraineFs {
         _chgtime: Option<SystemTime>,
         _bkuptime: Option<SystemTime>,
         _flags: Option<BsdFileFlags>,
+        _kill_suid_gid: bool,
         reply: ReplyAttr,
     ) {
         let update = SetAttrUpdate {
@@ -948,17 +951,18 @@ impl Filesystem for MoraineFs {
 
     fn mkdir(
         &self,
-        req: &Request,
+        _req: &Request,
         parent: INodeNo,
         name: &OsStr,
         mode: u32,
         _umask: u32,
+        owner: Owner,
         reply: ReplyEntry,
     ) {
         let result = (|| -> io::Result<FileAttr> {
             let parent_path = self.inode_path(parent)?;
             let logical = SourceRoot::child(&parent_path, name)?;
-            let (uid, gid, inherit_setgid) = self.creation_identity(&parent_path, req)?;
+            let (uid, gid, inherit_setgid) = self.creation_identity(&parent_path, owner)?;
             let mut mode_bits = mode & 0o7777;
             if inherit_setgid {
                 mode_bits |= libc::S_ISGID;
@@ -1065,16 +1069,17 @@ impl Filesystem for MoraineFs {
 
     fn symlink(
         &self,
-        req: &Request,
+        _req: &Request,
         parent: INodeNo,
         link_name: &OsStr,
         target: &Path,
+        owner: Owner,
         reply: ReplyEntry,
     ) {
         let result = (|| -> io::Result<FileAttr> {
             let parent_path = self.inode_path(parent)?;
             let logical = SourceRoot::child(&parent_path, link_name)?;
-            let (uid, gid, _) = self.creation_identity(&parent_path, req)?;
+            let (uid, gid, _) = self.creation_identity(&parent_path, owner)?;
             self.source.symlink(&parent_path, link_name, target)?;
             let parent_fd = self.source.open_parent(&parent_path)?;
             if let Err(error) = rfs::chownat(
@@ -1108,6 +1113,7 @@ impl Filesystem for MoraineFs {
         newparent: INodeNo,
         newname: &OsStr,
         flags: FuseRenameFlags,
+        _owner: Option<Owner>,
         reply: ReplyEmpty,
     ) {
         let result = (|| -> io::Result<()> {
@@ -1172,7 +1178,14 @@ impl Filesystem for MoraineFs {
         }
     }
 
-    fn open(&self, _req: &Request, ino: INodeNo, flags: OpenFlags, reply: ReplyOpen) {
+    fn open(
+        &self,
+        _req: &Request,
+        ino: INodeNo,
+        flags: OpenFlags,
+        _kill_suid_gid: bool,
+        reply: ReplyOpen,
+    ) {
         let prepared = (|| -> io::Result<(PathBuf, HandleData, bool, bool)> {
             let logical = self.inode_path(ino)?;
             let writable = flags.acc_mode() != OpenAccMode::O_RDONLY;
@@ -1411,18 +1424,19 @@ impl Filesystem for MoraineFs {
 
     fn mknod(
         &self,
-        req: &Request,
+        _req: &Request,
         parent: INodeNo,
         name: &OsStr,
         mode: u32,
         _umask: u32,
         rdev: u32,
+        owner: Owner,
         reply: ReplyEntry,
     ) {
         let result = (|| -> io::Result<FileAttr> {
             let parent_path = self.inode_path(parent)?;
             let child = SourceRoot::child(&parent_path, name)?;
-            let (uid, gid, _) = self.creation_identity(&parent_path, req)?;
+            let (uid, gid, _) = self.creation_identity(&parent_path, owner)?;
             let parent_fd = self.source.open_parent(&parent_path)?;
             let kind = rfs::FileType::from_raw_mode(mode);
             let create_mode = Mode::from_raw_mode(mode & 0o7777);
@@ -1782,12 +1796,14 @@ impl Filesystem for MoraineFs {
 
     fn create(
         &self,
-        req: &Request,
+        _req: &Request,
         parent: INodeNo,
         name: &OsStr,
         mode: u32,
         _umask: u32,
         flags: i32,
+        _kill_suid_gid: bool,
+        owner: Owner,
         reply: ReplyCreate,
     ) {
         let result = (|| -> io::Result<(FileAttr, FileHandle, Arc<BackingId>)> {
@@ -1801,7 +1817,7 @@ impl Filesystem for MoraineFs {
                 || self.config.policy.tier_for(&logical) == Tier::Volatile;
             let raw_flags = OpenFlags(flags);
             let open = open_flags(raw_flags)? | OFlags::CREATE;
-            let (uid, gid, _) = self.creation_identity(&parent_path, req)?;
+            let (uid, gid, _) = self.creation_identity(&parent_path, owner)?;
             let file_mode = Mode::from_raw_mode(mode & 0o7777);
 
             let (file, overlay) = if deferred {
@@ -2033,5 +2049,66 @@ impl Filesystem for MoraineFs {
             Ok(copied) => reply.written(copied),
             Err(error) => reply.error(errno(&error)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ForegroundConfig, MoraineFs, TierState};
+    use crate::{DirectoryMicroStore, FileMetadataStore, FileNamespaceJournal, Layout, Policy};
+    use fuser::Owner;
+    use std::fs;
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    use std::sync::Arc;
+
+    #[test]
+    fn creation_uses_kernel_owner_and_inherits_setgid_parent_group() {
+        let temp = tempfile::tempdir().unwrap();
+        let source = temp.path().join("source");
+        fs::create_dir(&source).unwrap();
+        let layout = Layout {
+            source_root: source.clone(),
+            overlay_root: temp.path().join("overlay"),
+        };
+        let tier = TierState {
+            metadata: Arc::new(FileMetadataStore::new(
+                layout.clone(),
+                temp.path().join("generations"),
+            )),
+            journal: Arc::new(FileNamespaceJournal::new(
+                layout.clone(),
+                temp.path().join("journal"),
+            )),
+            layout,
+            checkpoint_socket: temp.path().join("checkpoint.sock"),
+        };
+        let filesystem = MoraineFs::new(ForegroundConfig {
+            source_root: source.clone(),
+            policy: Policy::default(),
+            durable: tier.clone(),
+            volatile: tier,
+            micro: Arc::new(DirectoryMicroStore::new(temp.path().join("micro")).unwrap()),
+            range_cache: None,
+            admission_socket: temp.path().join("admission.sock"),
+            defer_file_namespace: false,
+            relaxed_create_durability: false,
+            writeback_copy_max: 0,
+        })
+        .unwrap();
+        let parent_gid = fs::metadata(&source).unwrap().gid();
+        let owner = Owner {
+            uid: 12345,
+            gid: parent_gid ^ 1,
+        };
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(
+            filesystem.creation_identity(&source, owner).unwrap(),
+            (owner.uid, owner.gid, false)
+        );
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o2755)).unwrap();
+        assert_eq!(
+            filesystem.creation_identity(&source, owner).unwrap(),
+            (owner.uid, parent_gid, true)
+        );
     }
 }
