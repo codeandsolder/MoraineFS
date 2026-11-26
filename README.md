@@ -56,4 +56,4 @@ Detailed exploration and benchmark history belong in Notion, not in the source t
 
 ## License
 
-GPL-2.0-only; see `LICENSE`.
+Licensed under either MIT or Apache-2.0, at your option; see `LICENSE-MIT` and `LICENSE-APACHE`.
