@@ -14,6 +14,6 @@ permissions:
 
 jobs:
   check:
-    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@4c7fc62a9f9ec37aaa7c155d263cd5025e446a53 # main
+    uses: codeandsolder/ci-workflows/.github/workflows/rust-sccache.yml@5b72e3865937d6e85e9ea485af9d04ec83343c5f # main
     with:
       command: make check
